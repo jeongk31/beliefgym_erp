@@ -1,0 +1,730 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="schedule-header d-flex justify-content-between align-items-center mb-4">
+    <h2 class="mb-0">스케줄 관리</h2>
+    {% if user.role == 'trainer' or selected_trainer_id %}
+    <div class="btn-group schedule-action-btns">
+        <button type="button" class="btn btn-primary" id="addModeBtn" onclick="enterAddMode()">
+            <i class="bi bi-plus-lg d-md-none"></i>
+            <span class="d-none d-md-inline">+ 스케줄 추가</span>
+            <span class="d-md-none">추가</span>
+        </button>
+        <button type="button" class="btn btn-outline-danger" id="deleteModeBtn" onclick="enterDeleteMode()">
+            <i class="bi bi-dash-lg d-md-none"></i>
+            <span class="d-none d-md-inline">- 스케줄 삭제</span>
+            <span class="d-md-none">삭제</span>
+        </button>
+    </div>
+    {% endif %}
+</div>
+
+{% if user.role == 'trainer' or selected_trainer_id %}
+<!-- Status Legend -->
+<div class="mb-3 status-legend">
+    <span class="badge bg-warning text-dark">수업 계획</span>
+    <span class="badge bg-success">수업 완료</span>
+    <span class="badge bg-danger">수업 취소</span>
+</div>
+
+<!-- Add Mode Panel (Hidden by default) -->
+<div class="card mb-3 border-primary" id="addModePanel" style="display: none;">
+    <div class="card-body py-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <span class="badge bg-primary fs-6">스케줄 추가 모드</span>
+            </div>
+            <div class="col-md-4">
+                <select id="selectedMember" class="form-select">
+                    <option value="">-- 회원 선택 --</option>
+                    {% for member in members %}
+                    <option value="{{ member.id }}">{{ member.member_name }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto" id="addModeIndicator" style="display: none;">
+                <span class="text-primary fw-bold">
+                    <span id="selectedMemberName"></span> - 시간대를 클릭하여 추가
+                </span>
+            </div>
+            <div class="col-auto ms-auto">
+                <button type="button" class="btn btn-secondary" onclick="exitMode()">완료</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Mode Panel (Hidden by default) -->
+<div class="card mb-3 border-danger" id="deleteModePanel" style="display: none;">
+    <div class="card-body py-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <span class="badge bg-danger fs-6">스케줄 삭제 모드</span>
+            </div>
+            <div class="col">
+                <span class="text-danger">삭제할 스케줄을 클릭하세요 (지난 수업은 삭제할 수 없습니다)</span>
+            </div>
+            <div class="col-auto ms-auto">
+                <button type="button" class="btn btn-secondary" onclick="exitMode()">완료</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Week Navigation & Filters -->
+<div class="card mb-4 week-nav-card">
+    <div class="card-body py-3">
+        <!-- Mobile: Show date range at top -->
+        <div class="d-md-none text-center mb-3">
+            <h6 class="mb-0 fw-bold text-primary">
+                {{ week_days[0].date[:7] }}월 {{ week_days[0].day_num }}일 - {{ week_days[6].day_num }}일
+            </h6>
+        </div>
+
+        <div class="row align-items-center g-2 g-md-3">
+            <div class="col-12 col-md-4 order-2 order-md-1">
+                <div class="btn-group w-100 week-nav-btns">
+                    <a href="#" class="btn btn-outline-secondary" id="prevWeekBtn">
+                        <i class="bi bi-chevron-left"></i>
+                        <span class="d-none d-sm-inline">이전</span>
+                    </a>
+                    <a href="{{ url_for('schedule', trainer_id=selected_trainer_id or '') }}" class="btn btn-outline-primary">오늘</a>
+                    <a href="#" class="btn btn-outline-secondary" id="nextWeekBtn">
+                        <span class="d-none d-sm-inline">다음</span>
+                        <i class="bi bi-chevron-right"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="col-md-4 text-center d-none d-md-block order-md-2">
+                <h5 class="mb-0">
+                    {{ week_days[0].date[:7] }}월 {{ week_days[0].day_num }}일 - {{ week_days[6].day_num }}일
+                </h5>
+            </div>
+            {% if user.role in ['main_admin', 'branch_admin'] %}
+            <div class="col-12 col-md-4 order-1 order-md-3">
+                <form method="GET">
+                    <select name="trainer_id" class="form-select" onchange="this.form.submit()">
+                        <option value="">-- 트레이너 선택 --</option>
+                        {% for trainer in trainers %}
+                        <option value="{{ trainer.id }}" {% if selected_trainer_id == trainer.id %}selected{% endif %}>
+                            {{ trainer.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="date" value="{{ selected_date }}">
+                </form>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Timetable Grid -->
+{% if user.role == 'trainer' or selected_trainer_id %}
+<div class="card schedule-card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-bordered mb-0 schedule-table">
+                <thead class="table-light">
+                    <tr>
+                        <th style="width: 80px;" class="text-center">시간</th>
+                        {% for day in week_days %}
+                        <th class="text-center {% if day.is_today %}bg-primary text-white{% endif %}">
+                            {{ day.day_name }}<br>
+                            <small>{{ day.day_num }}일</small>
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for time_slot in time_slots %}
+                    <tr>
+                        <td class="text-center align-middle bg-light">
+                            <strong>{{ time_slot }}</strong>
+                        </td>
+                        {% for day in week_days %}
+                        {% set schedule = schedule_grid[day.date][time_slot] %}
+                        {% set status = schedule.status if schedule and schedule.status else '수업 계획' %}
+                        {% set is_locked = (status in ['수업 완료', '수업 취소']) or (day.date < selected_date) %}
+                        <td class="schedule-cell {% if schedule %}has-schedule status-{{ 'planned' if status == '수업 계획' else 'completed' if status == '수업 완료' else 'cancelled' }}{% endif %}"
+                            data-date="{{ day.date }}" data-time="{{ time_slot }}"
+                            {% if schedule %}data-schedule-id="{{ schedule.id }}" data-status="{{ status }}" data-is-past="{{ 'true' if day.date < selected_date else 'false' }}" data-is-locked="{{ 'true' if is_locked else 'false' }}"{% endif %}>
+                            {% if schedule %}
+                            <div class="schedule-item">
+                                <div class="fw-bold">{{ schedule.member.member_name }}</div>
+                                <small class="text-muted">
+                                    {{ schedule.start_time[:5] }} - {{ schedule.end_time[:5] }}
+                                </small>
+                                {% if user.role != 'trainer' and schedule.trainer %}
+                                <br><small class="text-info">{{ schedule.trainer.name }}</small>
+                                {% endif %}
+                                <div class="mt-1">
+                                    <span class="badge {% if status == '수업 계획' %}bg-warning text-dark{% elif status == '수업 완료' %}bg-success{% else %}bg-danger{% endif %}">
+                                        {{ status }}
+                                    </span>
+                                    {% if schedule.work_type %}
+                                    <span class="badge bg-secondary">{{ schedule.work_type }}</span>
+                                    {% endif %}
+                                </div>
+                                <div class="schedule-actions mt-1">
+                                    {% if status == '수업 계획' %}
+                                    <a href="{{ url_for('complete_session', schedule_id=schedule.id) }}"
+                                       class="btn btn-sm btn-success">수업 완료</a>
+                                    <form method="POST" action="{{ url_for('cancel_session', schedule_id=schedule.id) }}"
+                                          style="display: inline;" onsubmit="return confirm('이 수업을 취소하시겠습니까?');">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">취소</button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <!-- Delete overlay for delete mode -->
+                            <div class="delete-overlay" onclick="deleteSchedule('{{ schedule.id }}', '{{ day.date }}')">
+                                <span class="delete-icon">X</span>
+                            </div>
+                            {% else %}
+                            <div class="empty-slot" onclick="addScheduleToSlot(this)">
+                                <span class="add-hint">+</span>
+                            </div>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <!-- Mobile scroll hint -->
+        <div class="scroll-hint d-md-none">
+            <i class="bi bi-arrow-left-right"></i> 좌우로 스크롤하세요
+        </div>
+    </div>
+</div>
+{% else %}
+<!-- No trainer selected message for admins -->
+<div class="card">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-person-badge fs-1 text-muted"></i>
+        <h5 class="mt-3 text-muted">트레이너를 선택해주세요</h5>
+        <p class="text-muted">스케줄을 보려면 위에서 트레이너를 선택하세요.</p>
+    </div>
+</div>
+{% endif %}
+
+<style>
+.schedule-table {
+    table-layout: fixed;
+}
+.schedule-table th, .schedule-table td {
+    vertical-align: middle;
+}
+.schedule-cell {
+    height: 100px;
+    position: relative;
+    transition: background-color 0.2s;
+}
+.schedule-cell:hover {
+    background-color: #f8f9fa;
+}
+.schedule-cell.status-planned {
+    background-color: #fff3cd;
+}
+.schedule-cell.status-completed {
+    background-color: #d1e7dd;
+}
+.schedule-cell.status-cancelled {
+    background-color: #f8d7da;
+}
+.schedule-item {
+    font-size: 0.8rem;
+    padding: 4px;
+}
+.empty-slot {
+    width: 100%;
+    height: 100%;
+    min-height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.empty-slot .add-hint {
+    display: none;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: #0d6efd;
+    color: white;
+    line-height: 30px;
+    text-align: center;
+    font-size: 1.2rem;
+}
+/* Add mode styling */
+body.add-mode .schedule-cell:not(.has-schedule) {
+    background-color: #e7f1ff;
+    cursor: pointer;
+}
+body.add-mode .schedule-cell:not(.has-schedule):hover {
+    background-color: #cfe2ff;
+}
+body.add-mode .schedule-cell:not(.has-schedule) .add-hint {
+    display: block;
+}
+/* Delete mode styling */
+.delete-overlay {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(220, 53, 69, 0.8);
+    cursor: pointer;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+}
+.delete-overlay .delete-icon {
+    color: white;
+    font-size: 2rem;
+    font-weight: bold;
+}
+/* For main_admin: can delete any schedule */
+body.delete-mode.is-main-admin .schedule-cell.has-schedule .delete-overlay {
+    display: flex;
+}
+body.delete-mode.is-main-admin .schedule-cell.has-schedule:hover .delete-overlay {
+    background: rgba(220, 53, 69, 0.95);
+}
+/* For non-main_admin: can only delete unlocked (planned & not past) schedules */
+body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule:not([data-is-locked="true"]) .delete-overlay {
+    display: flex;
+}
+body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule:not([data-is-locked="true"]):hover .delete-overlay {
+    background: rgba(220, 53, 69, 0.95);
+}
+body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule[data-is-locked="true"] {
+    opacity: 0.5;
+}
+/* Normal mode actions */
+.schedule-actions {
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+.schedule-cell:hover .schedule-actions {
+    opacity: 1;
+}
+.schedule-actions .btn {
+    padding: 0.15rem 0.4rem;
+    font-size: 0.7rem;
+    margin: 1px;
+}
+/* Hide actions in add/delete mode */
+body.add-mode .schedule-actions,
+body.delete-mode .schedule-actions {
+    display: none;
+}
+/* Loading state */
+.schedule-cell.loading {
+    opacity: 0.5;
+    pointer-events: none;
+}
+.schedule-cell.loading::after {
+    content: "...";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 20;
+}
+
+/* ========== MOBILE RESPONSIVE STYLES ========== */
+@media (max-width: 768px) {
+    /* Header - stack title and buttons */
+    .schedule-header {
+        flex-direction: column;
+        gap: 12px;
+    }
+    .schedule-header h2 {
+        font-size: 1.5rem;
+    }
+    .schedule-action-btns {
+        width: 100%;
+    }
+    .schedule-action-btns .btn {
+        flex: 1;
+        padding: 10px 12px;
+    }
+
+    /* Week Navigation Card */
+    .week-nav-card .card-body {
+        padding: 12px !important;
+    }
+    .week-nav-btns .btn {
+        padding: 10px 8px;
+        font-size: 0.9rem;
+    }
+
+    /* Mode Panels - Stack elements */
+    #addModePanel .row,
+    #deleteModePanel .row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    #addModePanel .row > div,
+    #deleteModePanel .row > div {
+        width: 100%;
+        margin: 0 !important;
+    }
+    #addModePanel .col-md-4 {
+        order: 1;
+    }
+    #addModePanel .col-auto:last-child,
+    #deleteModePanel .col-auto:last-child {
+        order: 3;
+    }
+    #addModePanel .col-auto:last-child .btn,
+    #deleteModePanel .col-auto:last-child .btn {
+        width: 100%;
+    }
+    #addModeIndicator {
+        display: block !important;
+        text-align: center;
+        padding: 8px;
+        background: #e7f1ff;
+        border-radius: 6px;
+        margin-top: 8px;
+    }
+    #addModeIndicator[style*="display: none"] {
+        display: none !important;
+    }
+
+    /* Schedule Table Container */
+    .schedule-card {
+        margin-bottom: 40px;
+    }
+    .table-responsive {
+        position: relative;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        margin-bottom: 5px;
+    }
+
+    /* Scroll hint */
+    .scroll-hint {
+        text-align: center;
+        font-size: 0.75rem;
+        color: #6c757d;
+        padding: 8px 0;
+        background: linear-gradient(to right, transparent, #f8f9fa 20%, #f8f9fa 80%, transparent);
+    }
+
+    /* Schedule Table - Sticky time column */
+    .schedule-table {
+        min-width: 600px;
+    }
+    .schedule-table thead th:first-child,
+    .schedule-table tbody td:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #f8f9fa;
+        box-shadow: 2px 0 4px rgba(0,0,0,0.1);
+    }
+    .schedule-table thead th:first-child {
+        z-index: 6;
+    }
+    .schedule-table th {
+        font-size: 0.75rem;
+        padding: 8px 4px;
+        min-width: 80px;
+    }
+    .schedule-table th:first-child {
+        min-width: 55px;
+        width: 55px;
+    }
+
+    /* Schedule cells */
+    .schedule-cell {
+        height: 90px;
+        min-width: 80px;
+    }
+    .schedule-item {
+        font-size: 0.7rem;
+        padding: 3px;
+    }
+    .schedule-item .fw-bold {
+        font-size: 0.75rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 70px;
+        display: block;
+    }
+    .schedule-item small {
+        font-size: 0.6rem;
+    }
+    .schedule-item .badge {
+        font-size: 0.55rem;
+        padding: 2px 4px;
+    }
+
+    /* Actions - Always visible on mobile, larger touch targets */
+    .schedule-actions {
+        opacity: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+    .schedule-actions .btn {
+        padding: 4px 6px;
+        font-size: 0.6rem;
+        min-height: 24px;
+    }
+
+    /* Empty slot */
+    .empty-slot {
+        min-height: 70px;
+    }
+    .empty-slot .add-hint {
+        width: 36px;
+        height: 36px;
+        line-height: 36px;
+        font-size: 1.4rem;
+    }
+
+    /* Delete overlay */
+    .delete-overlay .delete-icon {
+        font-size: 1.5rem;
+    }
+
+    /* Status legend - horizontal scroll friendly */
+    .status-legend {
+        display: flex;
+        gap: 8px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+    }
+    .status-legend .badge {
+        font-size: 0.7rem;
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+}
+
+/* Extra small devices */
+@media (max-width: 480px) {
+    .schedule-header h2 {
+        font-size: 1.25rem;
+    }
+    .schedule-table th {
+        font-size: 0.65rem;
+        min-width: 70px;
+    }
+    .schedule-table th:first-child {
+        min-width: 48px;
+        width: 48px;
+    }
+    .schedule-cell {
+        height: 85px;
+        min-width: 70px;
+    }
+    .schedule-item .fw-bold {
+        max-width: 60px;
+    }
+    .week-nav-btns .btn {
+        font-size: 0.8rem;
+        padding: 8px 6px;
+    }
+}
+</style>
+
+<script>
+const todayDate = '{{ selected_date }}';
+const userRole = '{{ user.role }}';
+const isMainAdmin = userRole === 'main_admin';
+
+document.addEventListener('DOMContentLoaded', function() {
+    // Add main_admin class to body for CSS targeting
+    if (isMainAdmin) {
+        document.body.classList.add('is-main-admin');
+    }
+
+    const weekStart = new Date('{{ week_start }}');
+
+    // Previous week
+    document.getElementById('prevWeekBtn').href = '{{ url_for("schedule") }}?date=' +
+        new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] +
+        '&trainer_id={{ selected_trainer_id or "" }}';
+
+    // Next week
+    document.getElementById('nextWeekBtn').href = '{{ url_for("schedule") }}?date=' +
+        new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] +
+        '&trainer_id={{ selected_trainer_id or "" }}';
+
+    // Member selection change
+    document.getElementById('selectedMember').addEventListener('change', function() {
+        const memberId = this.value;
+        const memberName = this.options[this.selectedIndex].text;
+        const indicator = document.getElementById('addModeIndicator');
+        const nameSpan = document.getElementById('selectedMemberName');
+
+        if (memberId) {
+            indicator.style.display = 'inline-block';
+            nameSpan.textContent = memberName;
+            // Save to sessionStorage
+            sessionStorage.setItem('selectedMemberId', memberId);
+            sessionStorage.setItem('selectedMemberName', memberName);
+        } else {
+            indicator.style.display = 'none';
+            sessionStorage.removeItem('selectedMemberId');
+            sessionStorage.removeItem('selectedMemberName');
+        }
+    });
+
+    // Restore mode from sessionStorage after page reload
+    const savedMode = sessionStorage.getItem('scheduleMode');
+    if (savedMode === 'add') {
+        enterAddMode(true); // true = restoring
+        const savedMemberId = sessionStorage.getItem('selectedMemberId');
+        const savedMemberName = sessionStorage.getItem('selectedMemberName');
+        if (savedMemberId) {
+            document.getElementById('selectedMember').value = savedMemberId;
+            document.getElementById('addModeIndicator').style.display = 'inline-block';
+            document.getElementById('selectedMemberName').textContent = savedMemberName;
+        }
+    } else if (savedMode === 'delete') {
+        enterDeleteMode(true); // true = restoring
+    }
+});
+
+function enterAddMode(restoring = false) {
+    exitMode(true); // silent exit
+    document.body.classList.add('add-mode');
+    document.getElementById('addModePanel').style.display = 'block';
+    document.getElementById('addModeBtn').classList.add('active');
+    if (!restoring) {
+        sessionStorage.setItem('scheduleMode', 'add');
+    }
+}
+
+function enterDeleteMode(restoring = false) {
+    exitMode(true); // silent exit
+    document.body.classList.add('delete-mode');
+    document.getElementById('deleteModePanel').style.display = 'block';
+    document.getElementById('deleteModeBtn').classList.add('active');
+    if (!restoring) {
+        sessionStorage.setItem('scheduleMode', 'delete');
+    }
+}
+
+function exitMode(silent = false) {
+    document.body.classList.remove('add-mode', 'delete-mode');
+    document.getElementById('addModePanel').style.display = 'none';
+    document.getElementById('deleteModePanel').style.display = 'none';
+    document.getElementById('addModeBtn').classList.remove('active');
+    document.getElementById('deleteModeBtn').classList.remove('active');
+    document.getElementById('selectedMember').value = '';
+    document.getElementById('addModeIndicator').style.display = 'none';
+
+    if (!silent) {
+        // Clear sessionStorage when user clicks 완료
+        sessionStorage.removeItem('scheduleMode');
+        sessionStorage.removeItem('selectedMemberId');
+        sessionStorage.removeItem('selectedMemberName');
+    }
+}
+
+function addScheduleToSlot(element) {
+    if (!document.body.classList.contains('add-mode')) return;
+
+    const memberId = document.getElementById('selectedMember').value;
+    if (!memberId) {
+        alert('먼저 회원을 선택해주세요.');
+        return;
+    }
+
+    const cell = element.closest('.schedule-cell');
+    const date = cell.dataset.date;
+    const time = cell.dataset.time;
+
+    // Prevent double-click
+    if (cell.classList.contains('loading')) return;
+    cell.classList.add('loading');
+
+    fetch('{{ url_for("quick_add_schedule") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            member_id: memberId,
+            date: date,
+            time: time
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload page - mode will be restored from sessionStorage
+            location.reload();
+        } else {
+            alert(data.error || '스케줄 추가에 실패했습니다.');
+            cell.classList.remove('loading');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('스케줄 추가 중 오류가 발생했습니다.');
+        cell.classList.remove('loading');
+    });
+}
+
+function deleteSchedule(scheduleId, scheduleDate) {
+    if (!document.body.classList.contains('delete-mode')) return;
+
+    const cell = document.querySelector(`[data-schedule-id="${scheduleId}"]`);
+    const status = cell ? cell.dataset.status : '';
+    const isLocked = cell ? cell.dataset.isLocked === 'true' : false;
+
+    // Only main_admin can modify completed/cancelled or past schedules
+    if (!isMainAdmin && isLocked) {
+        if (status === '수업 완료' || status === '수업 취소') {
+            alert('지난 수업에 대한 수정은 불가능합니다.');
+        } else {
+            alert('지난 스케줄은 삭제할 수 없습니다.');
+        }
+        return;
+    }
+
+    if (!confirm('이 스케줄을 삭제하시겠습니까?')) return;
+
+    if (cell) cell.classList.add('loading');
+
+    fetch('{{ url_for("quick_delete_schedule") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            schedule_id: scheduleId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Reload page - mode will be restored from sessionStorage
+            location.reload();
+        } else {
+            alert(data.error || '스케줄 삭제에 실패했습니다.');
+            if (cell) cell.classList.remove('loading');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('스케줄 삭제 중 오류가 발생했습니다.');
+        if (cell) cell.classList.remove('loading');
+    });
+}
+</script>
+{% endblock %}

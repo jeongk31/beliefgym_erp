@@ -1,0 +1,67 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>트레이너 관리</h2>
+    <a href="{{ url_for('add_trainer') }}" class="btn btn-primary">+ 새 트레이너 등록</a>
+</div>
+
+{% if user.role == 'main_admin' and branches %}
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="GET" class="row align-items-center">
+            <div class="col-auto">
+                <label class="col-form-label">지점 필터:</label>
+            </div>
+            <div class="col-auto">
+                <select name="branch_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">전체 지점</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if selected_branch_id == branch.id %}selected{% endif %}>
+                        {{ branch.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>이름</th>
+                        <th>이메일</th>
+                        <th>지점</th>
+                        <th>등록일</th>
+                        <th>회원</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for trainer in trainers %}
+                    <tr>
+                        <td><strong>{{ trainer.name }}</strong></td>
+                        <td>{{ trainer.email }}</td>
+                        <td>{{ trainer.branch.name if trainer.branch else '-' }}</td>
+                        <td>{{ trainer.created_at[:10] }}</td>
+                        <td>
+                            <a href="{{ url_for('members', trainer_id=trainer.id) }}" class="btn btn-sm btn-outline-primary">
+                                회원 보기
+                            </a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="text-center text-muted py-4">등록된 트레이너가 없습니다.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

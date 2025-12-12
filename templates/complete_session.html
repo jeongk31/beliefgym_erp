@@ -1,0 +1,195 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h4>수업 완료 처리</h4>
+            </div>
+            <div class="card-body">
+                <!-- Session Info -->
+                <div class="alert alert-info mb-4">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <strong>회원명:</strong> {{ schedule.member.member_name }}
+                        </div>
+                        <div class="col-md-6">
+                            <strong>날짜:</strong> {{ schedule.schedule_date }}
+                        </div>
+                        <div class="col-md-6">
+                            <strong>시간:</strong> {{ schedule.start_time[:5] }} - {{ schedule.end_time[:5] }}
+                        </div>
+                    </div>
+                </div>
+
+                <form method="POST" id="completeForm">
+                    <!-- Work Type Selection -->
+                    <div class="mb-4">
+                        <label class="form-label"><strong>근무 유형 *</strong></label>
+                        <div class="d-flex gap-3">
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="work_type"
+                                       id="workTypeIn" value="근무내" required>
+                                <label class="form-check-label btn btn-outline-primary px-4 py-2" for="workTypeIn">
+                                    근무내
+                                </label>
+                            </div>
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="radio" name="work_type"
+                                       id="workTypeOut" value="근무외" required>
+                                <label class="form-check-label btn btn-outline-secondary px-4 py-2" for="workTypeOut">
+                                    근무외
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Signature Pad -->
+                    <div class="mb-4">
+                        <label class="form-label"><strong>회원 서명 *</strong></label>
+                        <p class="text-muted small">회원에게 아래에 서명을 받아주세요.</p>
+                        <div class="signature-container border rounded p-2 bg-white">
+                            <canvas id="sessionSignatureCanvas" width="400" height="150"
+                                    style="width: 100%; max-width: 400px; border: 1px solid #ccc; border-radius: 4px; touch-action: none;"></canvas>
+                        </div>
+                        <input type="hidden" name="session_signature" id="session_signature">
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearSessionSignature()">
+                            서명 지우기
+                        </button>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-success btn-lg">
+                            <i class="bi bi-check-circle"></i> 수업 완료
+                        </button>
+                        <a href="{{ url_for('schedule', date=schedule.schedule_date) }}" class="btn btn-secondary">취소</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.form-check-inline .form-check-input {
+    display: none;
+}
+.form-check-inline .form-check-input:checked + .form-check-label {
+    background-color: #0d6efd;
+    color: white;
+    border-color: #0d6efd;
+}
+.form-check-inline .form-check-input[value="근무외"]:checked + .form-check-label {
+    background-color: #6c757d;
+    border-color: #6c757d;
+}
+.signature-container {
+    background-color: #f8f9fa;
+}
+</style>
+
+<script>
+// Session Signature Pad
+const sessionCanvas = document.getElementById('sessionSignatureCanvas');
+const sessionCtx = sessionCanvas.getContext('2d');
+let isSessionDrawing = false;
+let sessionLastX = 0;
+let sessionLastY = 0;
+
+// Set up canvas
+sessionCtx.strokeStyle = '#000';
+sessionCtx.lineWidth = 2;
+sessionCtx.lineCap = 'round';
+sessionCtx.lineJoin = 'round';
+
+// Fill with white background
+sessionCtx.fillStyle = '#fff';
+sessionCtx.fillRect(0, 0, sessionCanvas.width, sessionCanvas.height);
+
+function getSessionPosition(e) {
+    const rect = sessionCanvas.getBoundingClientRect();
+    const scaleX = sessionCanvas.width / rect.width;
+    const scaleY = sessionCanvas.height / rect.height;
+
+    if (e.touches) {
+        return {
+            x: (e.touches[0].clientX - rect.left) * scaleX,
+            y: (e.touches[0].clientY - rect.top) * scaleY
+        };
+    }
+    return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+    };
+}
+
+function startSessionDrawing(e) {
+    isSessionDrawing = true;
+    const pos = getSessionPosition(e);
+    sessionLastX = pos.x;
+    sessionLastY = pos.y;
+}
+
+function sessionDraw(e) {
+    if (!isSessionDrawing) return;
+    e.preventDefault();
+
+    const pos = getSessionPosition(e);
+
+    sessionCtx.beginPath();
+    sessionCtx.moveTo(sessionLastX, sessionLastY);
+    sessionCtx.lineTo(pos.x, pos.y);
+    sessionCtx.stroke();
+
+    sessionLastX = pos.x;
+    sessionLastY = pos.y;
+
+    updateSessionSignatureData();
+}
+
+function stopSessionDrawing() {
+    isSessionDrawing = false;
+}
+
+function updateSessionSignatureData() {
+    const signatureData = sessionCanvas.toDataURL('image/png');
+    document.getElementById('session_signature').value = signatureData;
+}
+
+function clearSessionSignature() {
+    sessionCtx.fillStyle = '#fff';
+    sessionCtx.fillRect(0, 0, sessionCanvas.width, sessionCanvas.height);
+    document.getElementById('session_signature').value = '';
+}
+
+// Mouse events
+sessionCanvas.addEventListener('mousedown', startSessionDrawing);
+sessionCanvas.addEventListener('mousemove', sessionDraw);
+sessionCanvas.addEventListener('mouseup', stopSessionDrawing);
+sessionCanvas.addEventListener('mouseout', stopSessionDrawing);
+
+// Touch events
+sessionCanvas.addEventListener('touchstart', startSessionDrawing);
+sessionCanvas.addEventListener('touchmove', sessionDraw);
+sessionCanvas.addEventListener('touchend', stopSessionDrawing);
+
+// Form validation
+document.getElementById('completeForm').addEventListener('submit', function(e) {
+    const signature = document.getElementById('session_signature').value;
+    const workType = document.querySelector('input[name="work_type"]:checked');
+
+    if (!workType) {
+        e.preventDefault();
+        alert('근무 유형을 선택해주세요.');
+        return;
+    }
+
+    if (!signature) {
+        e.preventDefault();
+        alert('회원 서명을 받아주세요.');
+        return;
+    }
+});
+</script>
+{% endblock %}

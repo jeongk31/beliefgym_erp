@@ -1,0 +1,23 @@
+# Environment
+.env
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# Sensitive data
+pw.txt
+*.xlsx
+
+# macOS
+.DS_Store
+~$*
+
+# Temp files
+*.log
+*.tmp

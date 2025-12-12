@@ -1,0 +1,475 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2>회원 관리</h2>
+        {% if filter_trainer_name %}
+        <p class="text-muted mb-0">{{ filter_trainer_name }} 트레이너의 회원</p>
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#refundModal">
+            <i class="bi bi-arrow-counterclockwise"></i> 회원 환불
+        </button>
+        <a href="{{ url_for('add_member') }}" class="btn btn-primary">+ 새 회원 등록</a>
+    </div>
+</div>
+
+{% if user.role == 'main_admin' or user.role == 'branch_admin' %}
+<!-- Filter Section -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="GET" id="filterForm" class="row g-2 align-items-center">
+            <input type="hidden" name="month" value="{{ selected_month }}">
+            {% if user.role == 'main_admin' %}
+            <div class="col-auto">
+                <label class="col-form-label"><strong>지점:</strong></label>
+            </div>
+            <div class="col-auto">
+                <select name="branch_id" id="branchSelect" class="form-select form-select-sm" style="min-width: 150px;">
+                    <option value="">지점 선택</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if filter_branch_id == branch.id %}selected{% endif %}>
+                        {{ branch.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            <div class="col-auto">
+                <label class="col-form-label"><strong>트레이너:</strong></label>
+            </div>
+            <div class="col-auto">
+                <select name="trainer_id" id="trainerSelect" class="form-select form-select-sm" style="min-width: 150px;">
+                    <option value="">트레이너 선택</option>
+                    {% for trainer in trainers %}
+                    <option value="{{ trainer.id }}" {% if filter_trainer_id == trainer.id %}selected{% endif %}>
+                        {{ trainer.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <button type="submit" class="btn btn-sm btn-primary">조회</button>
+            </div>
+            {% if filter_branch_id or filter_trainer_id %}
+            <div class="col-auto">
+                <a href="{{ url_for('members', month=selected_month) }}" class="btn btn-sm btn-outline-secondary">초기화</a>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- Month Navigation -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <div class="d-flex justify-content-between align-items-center">
+            <a href="{{ url_for('members', month=(selected_year ~ '-' ~ '%02d'|format(selected_month_num - 1) if selected_month_num > 1 else (selected_year - 1) ~ '-12'), branch_id=filter_branch_id, trainer_id=filter_trainer_id) }}"
+               class="btn btn-outline-secondary">&larr; 이전 달</a>
+            <h5 class="mb-0">{{ selected_year }}년 {{ selected_month_num }}월</h5>
+            <a href="{{ url_for('members', month=(selected_year ~ '-' ~ '%02d'|format(selected_month_num + 1) if selected_month_num < 12 else (selected_year + 1) ~ '-01'), branch_id=filter_branch_id, trainer_id=filter_trainer_id) }}"
+               class="btn btn-outline-secondary">다음 달 &rarr;</a>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-bordered table-hover mb-0 members-table">
+                <thead class="table-light">
+                    <tr>
+                        <th rowspan="2" class="align-middle text-center sticky-col">회원명</th>
+                        <th rowspan="2" class="align-middle text-center">서명</th>
+                        <th rowspan="2" class="align-middle text-center">전화번호</th>
+                        <th rowspan="2" class="align-middle text-center">결제수단</th>
+                        <th rowspan="2" class="align-middle text-center">세션</th>
+                        <th rowspan="2" class="align-middle text-center">단가</th>
+                        <th rowspan="2" class="align-middle text-center">계약금액</th>
+                        <th rowspan="2" class="align-middle text-center">경로</th>
+                        <th rowspan="2" class="align-middle text-center">누적세션</th>
+                        <th rowspan="2" class="align-middle text-center">잔여</th>
+                        {% if user.role != 'trainer' %}
+                        <th rowspan="2" class="align-middle text-center">트레이너</th>
+                        {% endif %}
+                        <th rowspan="2" class="align-middle text-center">근무</th>
+                        <th colspan="{{ month_days|length }}" class="text-center">일별 세션 (완료)</th>
+                    </tr>
+                    <tr>
+                        {% for day in month_days %}
+                        <th class="text-center day-header {% if loop.index0 % 7 == 5 %}sat{% elif loop.index0 % 7 == 6 %}sun{% endif %}">
+                            {{ day.day }}
+                        </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for member in members %}
+                    <tr class="{% if member.refund_status == 'refunded' %}refunded-row{% endif %}">
+                        <td class="sticky-col" rowspan="2">
+                            <a href="{{ url_for('view_member', member_id=member.id) }}" class="text-decoration-none">
+                                <strong>{{ member.member_name }}</strong>
+                            </a>
+                            {% if member.refund_status == 'refunded' %}
+                            <span class="badge bg-danger ms-1">환불</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center" rowspan="2">
+                            {% if member.signature %}
+                            <img src="{{ member.signature }}" alt="서명" class="member-signature"
+                                 onclick="showSignatureModal('{{ member.member_name }}', '{{ member.signature }}')"
+                                 style="max-width: 60px; max-height: 30px; cursor: pointer;">
+                            {% else %}
+                            <span class="text-muted">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-center" rowspan="2">{{ member.phone }}</td>
+                        <td class="text-center" rowspan="2">{{ member.payment_method }}</td>
+                        <td class="text-center" rowspan="2">{{ member.sessions }}회</td>
+                        <td class="text-end" rowspan="2">{{ "{:,}".format(member.unit_price) }}원</td>
+                        <td class="text-end fw-bold" rowspan="2">{{ "{:,}".format(member.contract_amount) }}원</td>
+                        <td class="text-center" rowspan="2">
+                            <span class="badge
+                                {% if member.channel == 'WI' %}bg-primary
+                                {% elif member.channel == 'OT' %}bg-success
+                                {% elif member.channel == '재등록' %}bg-warning text-dark
+                                {% else %}bg-info{% endif %}">
+                                {{ member.channel }}
+                            </span>
+                        </td>
+                        <td class="text-center" rowspan="2">
+                            <span class="badge bg-success">{{ member.completed_sessions }}회</span>
+                        </td>
+                        <td class="text-center" rowspan="2">
+                            {% if member.remaining_sessions > 0 %}
+                            <span class="badge bg-secondary">{{ member.remaining_sessions }}회</span>
+                            {% else %}
+                            <span class="badge bg-danger">완료</span>
+                            {% endif %}
+                        </td>
+                        {% if user.role != 'trainer' %}
+                        <td class="text-center" rowspan="2">{{ member.trainer.name if member.trainer else '-' }}</td>
+                        {% endif %}
+                        <td class="text-center work-type-cell main-type">M</td>
+                        <!-- Main (근무내) row -->
+                        {% for day in month_days %}
+                        {% set schedules = member.schedule_map.get(day.date, []) %}
+                        {% set main_sessions = schedules|selectattr('status', 'equalto', '수업 완료')|selectattr('work_type', 'equalto', '근무내')|list %}
+                        <td class="text-center session-cell main-row {% if main_sessions|length > 0 %}completed{% endif %}">
+                            {% if main_sessions|length > 0 %}
+                                <span class="session-hours clickable session-detail-trigger"
+                                      data-member="{{ member.member_name }}"
+                                      data-date="{{ day.date }}"
+                                      data-worktype="근무내"
+                                      data-sessions='{{ main_sessions|tojson }}'>{{ main_sessions|length }}</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    <tr class="sub-row {% if member.refund_status == 'refunded' %}refunded-row{% endif %}">
+                        <td class="text-center work-type-cell other-type">그 외</td>
+                        <!-- 그 외 (근무외) row -->
+                        {% for day in month_days %}
+                        {% set schedules = member.schedule_map.get(day.date, []) %}
+                        {% set other_sessions = schedules|selectattr('status', 'equalto', '수업 완료')|selectattr('work_type', 'equalto', '근무외')|list %}
+                        <td class="text-center session-cell other-row {% if other_sessions|length > 0 %}completed{% endif %}">
+                            {% if other_sessions|length > 0 %}
+                                <span class="session-hours clickable session-detail-trigger"
+                                      data-member="{{ member.member_name }}"
+                                      data-date="{{ day.date }}"
+                                      data-worktype="근무외"
+                                      data-sessions='{{ other_sessions|tojson }}'>{{ other_sessions|length }}</span>
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="{{ 11 + month_days|length + (1 if user.role != 'trainer' else 0) }}" class="text-center text-muted py-4">
+                            {% if user.role == 'main_admin' and not filter_branch_id and not filter_trainer_id %}
+                                지점과 트레이너를 선택해주세요.
+                            {% elif user.role == 'branch_admin' and not filter_trainer_id %}
+                                트레이너를 선택해주세요.
+                            {% else %}
+                                등록된 회원이 없습니다.
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Legend -->
+<div class="mt-3">
+    <small class="text-muted">
+        <span class="me-3"><strong>M</strong> = Main (근무내)</span>
+        <span class="me-3"><strong>그 외</strong> = 근무외</span>
+        <span class="badge bg-success me-1">1</span> = 완료된 세션 (시간)
+    </small>
+</div>
+
+<style>
+.members-table {
+    font-size: 0.85rem;
+}
+.members-table th, .members-table td {
+    white-space: nowrap;
+    vertical-align: middle;
+}
+.sticky-col {
+    position: sticky;
+    left: 0;
+    background: white;
+    z-index: 1;
+}
+thead .sticky-col {
+    background: #f8f9fa;
+    z-index: 2;
+}
+.day-header {
+    min-width: 28px;
+    font-size: 0.7rem;
+    padding: 2px !important;
+}
+.day-header.sat {
+    color: #0d6efd;
+}
+.day-header.sun {
+    color: #dc3545;
+}
+.work-type-cell {
+    font-size: 0.75rem;
+    font-weight: bold;
+    padding: 4px 6px !important;
+    min-width: 40px;
+}
+.work-type-cell.main-type {
+    background-color: #cfe2ff;
+}
+.work-type-cell.other-type {
+    background-color: #f8f9fa;
+}
+.session-cell {
+    min-width: 28px;
+    padding: 4px 2px !important;
+    font-size: 0.75rem;
+    height: 24px;
+}
+.session-cell.main-row {
+    border-bottom: none !important;
+}
+.session-cell.other-row {
+    border-top: none !important;
+}
+.session-cell.completed {
+    background-color: #d1e7dd;
+}
+.session-cell.main-row.completed {
+    background-color: #b6d4fe;
+}
+.session-hours {
+    font-weight: bold;
+}
+.session-hours.clickable {
+    cursor: pointer;
+    text-decoration: underline;
+}
+.session-hours.clickable:hover {
+    color: #0d6efd;
+}
+.sub-row td.session-cell {
+    border-top: 1px dashed #dee2e6 !important;
+}
+tr.sub-row {
+    background-color: #fafafa;
+}
+.member-signature {
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background: white;
+}
+/* Refunded row styles */
+.refunded-row {
+    background-color: #f8d7da !important;
+    opacity: 0.7;
+}
+.refunded-row td {
+    background-color: #f8d7da !important;
+}
+</style>
+
+<!-- Signature Modal -->
+<div class="modal fade" id="signatureModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="signatureModalTitle">회원 서명</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <img id="signatureModalImage" src="" alt="서명" style="max-width: 100%; border: 1px solid #dee2e6; border-radius: 4px;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Refund Modal -->
+<div class="modal fade" id="refundModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="bi bi-arrow-counterclockwise"></i> 회원 환불</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-3">환불할 회원을 선택하세요:</p>
+                <div class="list-group" id="refundMemberList">
+                    {% for member in members %}
+                    {% if member.refund_status != 'refunded' %}
+                    <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+                            onclick="confirmRefund('{{ member.id }}', '{{ member.member_name }}')">
+                        <span>
+                            <strong>{{ member.member_name }}</strong>
+                            <small class="text-muted ms-2">{{ member.phone }}</small>
+                        </span>
+                        <span class="badge bg-secondary">{{ "{:,}".format(member.contract_amount) }}원</span>
+                    </button>
+                    {% endif %}
+                    {% else %}
+                    <div class="text-center text-muted py-3">환불 가능한 회원이 없습니다.</div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Session Detail Modal (Multiple Sessions) -->
+<div class="modal fade" id="sessionDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="sessionDetailTitle">세션 상세 정보</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <span class="fw-bold" id="sessionMemberName"></span>
+                    <span class="text-muted ms-2" id="sessionDate"></span>
+                    <span class="ms-2" id="sessionWorkTypeBadge"></span>
+                </div>
+                <div id="sessionsContainer"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showSignatureModal(memberName, signatureData) {
+    document.getElementById('signatureModalTitle').textContent = memberName + ' 회원 서명';
+    document.getElementById('signatureModalImage').src = signatureData;
+    new bootstrap.Modal(document.getElementById('signatureModal')).show();
+}
+
+// Event delegation for session detail triggers
+document.addEventListener('click', function(e) {
+    const trigger = e.target.closest('.session-detail-trigger');
+    if (trigger) {
+        const memberName = trigger.dataset.member;
+        const date = trigger.dataset.date;
+        const workType = trigger.dataset.worktype;
+        const sessions = JSON.parse(trigger.dataset.sessions);
+        showSessionDetails(memberName, date, workType, sessions);
+    }
+});
+
+function showSessionDetails(memberName, date, workType, sessions) {
+    document.getElementById('sessionDetailTitle').textContent = memberName + ' - ' + date + ' 세션 상세';
+    document.getElementById('sessionMemberName').textContent = memberName;
+    document.getElementById('sessionDate').textContent = date;
+
+    // Work type badge
+    const workTypeBadge = document.getElementById('sessionWorkTypeBadge');
+    if (workType === '근무내') {
+        workTypeBadge.innerHTML = '<span class="badge bg-primary">근무내 (Main)</span>';
+    } else {
+        workTypeBadge.innerHTML = '<span class="badge bg-secondary">근무외 (그 외)</span>';
+    }
+
+    // Build sessions list (vertically stacked)
+    const container = document.getElementById('sessionsContainer');
+    container.innerHTML = '';
+
+    sessions.forEach((session, index) => {
+        const sessionDiv = document.createElement('div');
+        sessionDiv.className = 'border rounded p-3 mb-3';
+        sessionDiv.innerHTML = `
+            <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-2">
+                <span class="fw-bold fs-6">세션 ${index + 1}</span>
+                <span class="badge bg-dark">${session.start_time.substring(0, 5)} - ${session.end_time.substring(0, 5)}</span>
+            </div>
+            <div class="row">
+                <div class="col-12">
+                    <small class="text-muted">서명:</small>
+                    ${session.session_signature ? `
+                        <div class="mt-1 p-2 bg-light rounded text-center">
+                            <img src="${session.session_signature}" alt="세션 서명"
+                                 style="max-width: 100%; max-height: 120px; border: 1px solid #dee2e6; border-radius: 4px; background: white;">
+                        </div>
+                    ` : `
+                        <div class="mt-1 text-muted">서명 없음</div>
+                    `}
+                </div>
+            </div>
+        `;
+        container.appendChild(sessionDiv);
+    });
+
+    // Summary at bottom
+    const summary = document.createElement('div');
+    summary.className = 'alert alert-info mb-0 py-2 text-center';
+    summary.innerHTML = `<strong>총 ${sessions.length}시간</strong> 완료`;
+    container.appendChild(summary);
+
+    new bootstrap.Modal(document.getElementById('sessionDetailModal')).show();
+}
+
+// Branch filter - when branch changes, reset trainer and auto-submit to reload trainers
+const branchSelect = document.getElementById('branchSelect');
+if (branchSelect) {
+    branchSelect.addEventListener('change', function() {
+        const trainerSelect = document.getElementById('trainerSelect');
+        if (trainerSelect) {
+            trainerSelect.value = '';  // Reset trainer selection
+        }
+        document.getElementById('filterForm').submit();
+    });
+}
+
+// Refund confirmation
+function confirmRefund(memberId, memberName) {
+    // Close the modal first
+    const modal = bootstrap.Modal.getInstance(document.getElementById('refundModal'));
+    if (modal) modal.hide();
+
+    // Confirm refund
+    if (confirm(`정말 "${memberName}" 회원을 환불 처리하시겠습니까?\n\n환불 처리 시:\n- 해당 회원의 계약금액이 매출에서 제외됩니다.\n- 이전 달 등록 회원인 경우, 인센티브 차액이 이번 달 급여에서 차감됩니다.\n- 수업료(완료된 수업)는 유지됩니다.`)) {
+        // Submit refund request
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/members/${memberId}/refund`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+</script>
+{% endblock %}

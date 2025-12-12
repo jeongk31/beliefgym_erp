@@ -1,0 +1,100 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h4>새 회원 등록</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST" id="memberForm">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="member_name" class="form-label">회원명 *</label>
+                            <input type="text" class="form-control" id="member_name" name="member_name" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="phone" class="form-label">전화번호 *</label>
+                            <input type="tel" class="form-control" id="phone" name="phone" placeholder="010-0000-0000" required>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="payment_method" class="form-label">결제수단 *</label>
+                            <select class="form-select" id="payment_method" name="payment_method" required>
+                                <option value="">선택하세요</option>
+                                <option value="현금">현금</option>
+                                <option value="카드">카드</option>
+                                <option value="계좌이체">계좌이체</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="channel" class="form-label">경로 *</label>
+                            <select class="form-select" id="channel" name="channel" required>
+                                <option value="">선택하세요</option>
+                                <option value="WI">WI</option>
+                                <option value="OT">OT</option>
+                                <option value="재등록">재등록</option>
+                                <option value="소개">소개</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="sessions" class="form-label">세션 수 *</label>
+                            <input type="number" class="form-control" id="sessions" name="sessions" min="1" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="unit_price" class="form-label">단가 (원) *</label>
+                            <input type="number" class="form-control" id="unit_price" name="unit_price" min="0" step="1000" required>
+                        </div>
+                    </div>
+
+                    {% if user.role in ['main_admin', 'branch_admin'] %}
+                    <div class="mb-3">
+                        <label for="trainer_id" class="form-label">담당 트레이너 *</label>
+                        <select class="form-select" id="trainer_id" name="trainer_id" required>
+                            <option value="">선택하세요</option>
+                            {% for trainer in trainers %}
+                            <option value="{{ trainer.id }}">{{ trainer.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label class="form-label">회원 서명 *</label>
+                        <div class="border rounded p-2 bg-light">
+                            <canvas id="signatureCanvas" width="600" height="200" class="border bg-white w-100"></canvas>
+                        </div>
+                        <input type="hidden" id="signature" name="signature">
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearSignature()">서명 지우기</button>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">회원 등록</button>
+                        <a href="{{ url_for('members') }}" class="btn btn-secondary">취소</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/signature.js') }}"></script>
+<script>
+    document.getElementById('memberForm').addEventListener('submit', function(e) {
+        const signatureData = document.getElementById('signature').value;
+        if (!signatureData) {
+            e.preventDefault();
+            alert('회원 서명을 입력해주세요.');
+            return false;
+        }
+    });
+</script>
+{% endblock %}

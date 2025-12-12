@@ -1,0 +1,467 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+.tier-table {
+    font-size: 0.75rem;
+}
+.tier-table th, .tier-table td {
+    padding: 0.25rem 0.35rem;
+}
+.tier-card .card-header {
+    padding: 0.35rem 0.6rem;
+}
+.tier-card .card-header h6 {
+    font-size: 0.8rem;
+}
+.tier-card .card-body {
+    padding: 0.4rem !important;
+}
+.tier-card small {
+    font-size: 0.65rem;
+}
+.salary-breakdown {
+    font-size: 0.85rem;
+    max-width: 400px;
+    margin: 0 auto;
+}
+.salary-breakdown td, .salary-breakdown th {
+    padding: 0.3rem 0.6rem;
+}
+.salary-breakdown .card-header {
+    padding: 0.4rem 0.6rem;
+}
+.salary-breakdown .card-header h6 {
+    font-size: 0.9rem;
+}
+.sales-display {
+    font-size: 0.85rem;
+    max-width: 400px;
+    margin: 0 auto;
+}
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>급여 관리</h2>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="GET" class="row align-items-center g-2">
+            <div class="col-auto">
+                <label class="col-form-label">월 선택:</label>
+            </div>
+            <div class="col-auto">
+                <input type="month" name="month" class="form-control form-control-sm"
+                       value="{{ selected_month }}" onchange="this.form.submit()">
+            </div>
+            {% if user.role == 'main_admin' and branches %}
+            <div class="col-auto">
+                <label class="col-form-label ms-3">지점:</label>
+            </div>
+            <div class="col-auto">
+                <select name="branch_id" id="branchSelect" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">지점 선택</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if filter_branch_id == branch.id %}selected{% endif %}>
+                        {{ branch.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+            {% if user.role != 'trainer' %}
+            <div class="col-auto">
+                <label class="col-form-label ms-3">트레이너:</label>
+            </div>
+            <div class="col-auto">
+                <select name="trainer_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">트레이너 선택</option>
+                    {% for trainer in trainers %}
+                    <option value="{{ trainer.id }}" {% if selected_trainer_id == trainer.id %}selected{% endif %}>
+                        {{ trainer.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+{% if user.role == 'trainer' %}
+    {% set my_sales = trainers[0].sales if trainers else 0 %}
+    {% set my_six_month = trainers[0].six_month_sales if trainers else 0 %}
+{% elif selected_trainer %}
+    {% set my_sales = selected_trainer.sales %}
+    {% set my_six_month = selected_trainer.six_month_sales %}
+{% else %}
+    {% set my_sales = none %}
+    {% set my_six_month = none %}
+{% endif %}
+
+<!-- Top Row: 영업지원인센티브 and 진급조건 side by side -->
+<div class="row mb-2">
+    <!-- Sales Support Incentive Tier Table -->
+    <div class="col-md-6">
+        <div class="card h-100 tier-card">
+            <div class="card-header">
+                <h6 class="mb-0">트레이너 영업지원인센티브</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm mb-0 text-center tier-table">
+                        <thead>
+                            <tr class="table-secondary">
+                                <th style="min-width: 80px;">매출</th>
+                                <th>3,000,000 이하</th>
+                                <th>3,000,000 초과</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="table-secondary fw-bold">인센</td>
+                                {% if my_sales is not none %}
+                                <td class="{% if my_sales > 0 and my_sales <= 3000000 %}table-success fw-bold{% endif %}">₩500,000</td>
+                                <td class="{% if my_sales > 3000000 %}table-success fw-bold{% endif %}">₩1,000,000</td>
+                                {% else %}
+                                <td>₩500,000</td>
+                                <td>₩1,000,000</td>
+                                {% endif %}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Master Trainer Tier Table -->
+    <div class="col-md-6">
+        <div class="card h-100 tier-card">
+            <div class="card-header">
+                <h6 class="mb-0">트레이너 진급 조건 (Master Trainer)</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm mb-0 text-center tier-table">
+                        <thead>
+                            <tr class="table-secondary">
+                                <th style="min-width: 100px;">6개월 총 매출</th>
+                                <th>9,000,000 미만</th>
+                                <th>9,000,000 이상</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="table-secondary fw-bold">보너스</td>
+                                {% if my_six_month is not none %}
+                                <td class="{% if my_six_month < 9000000 %}table-success fw-bold{% endif %}">₩0</td>
+                                <td class="{% if my_six_month >= 9000000 %}table-success fw-bold{% endif %}">₩300,000</td>
+                                {% else %}
+                                <td>₩0</td>
+                                <td>₩300,000</td>
+                                {% endif %}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <small class="text-muted mt-2 d-block">* 현재 월 + 과거 5개월 총 계약금액 기준</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Incentive Tier Table (Horizontal) -->
+<div class="card mb-3 tier-card">
+    <div class="card-header">
+        <h6 class="mb-0">트레이너 인센티브</h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered table-sm mb-0 text-center tier-table">
+                <thead>
+                    <tr class="table-secondary">
+                        <th style="min-width: 60px;">매출</th>
+                        <th>3,000,000 미만</th>
+                        <th>3,000,000</th>
+                        <th>4,500,000</th>
+                        <th>6,500,000</th>
+                        <th>8,500,000</th>
+                        <th>10,000,000</th>
+                        <th>12,000,000</th>
+                        <th>15,000,000</th>
+                        <th>20,000,000</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td class="table-secondary fw-bold">인센</td>
+                        {% if my_sales is not none %}
+                        <td class="{% if my_sales < 3000000 %}table-success fw-bold{% endif %}">₩0</td>
+                        <td class="{% if my_sales >= 3000000 and my_sales < 4500000 %}table-success fw-bold{% endif %}">₩480,000</td>
+                        <td class="{% if my_sales >= 4500000 and my_sales < 6500000 %}table-success fw-bold{% endif %}">₩1,050,000</td>
+                        <td class="{% if my_sales >= 6500000 and my_sales < 8500000 %}table-success fw-bold{% endif %}">₩1,430,000</td>
+                        <td class="{% if my_sales >= 8500000 and my_sales < 10000000 %}table-success fw-bold{% endif %}">₩1,955,000</td>
+                        <td class="{% if my_sales >= 10000000 and my_sales < 12000000 %}table-success fw-bold{% endif %}">₩2,400,000</td>
+                        <td class="{% if my_sales >= 12000000 and my_sales < 15000000 %}table-success fw-bold{% endif %}">₩3,040,000</td>
+                        <td class="{% if my_sales >= 15000000 and my_sales < 20000000 %}table-success fw-bold{% endif %}">₩4,050,000</td>
+                        <td class="{% if my_sales >= 20000000 %}table-success fw-bold{% endif %}">₩5,400,000</td>
+                        {% else %}
+                        <td>₩0</td>
+                        <td>₩480,000</td>
+                        <td>₩1,050,000</td>
+                        <td>₩1,430,000</td>
+                        <td>₩1,955,000</td>
+                        <td>₩2,400,000</td>
+                        <td>₩3,040,000</td>
+                        <td>₩4,050,000</td>
+                        <td>₩5,400,000</td>
+                        {% endif %}
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        <small class="text-muted mt-2 d-block">* 매출 = 해당 월에 등록된 회원들의 총 계약금액 (세션 수 x 단가)</small>
+    </div>
+</div>
+
+<!-- 수업료 Tier Tables -->
+<div class="row mb-3">
+    <!-- 수업료 근무내 -->
+    <div class="col-md-9">
+        <div class="card h-100 tier-card">
+            <div class="card-header">
+                <h6 class="mb-0">수업료 (근무내)</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm mb-0 text-center tier-table">
+                        <thead>
+                            <tr class="table-secondary">
+                                <th style="min-width: 60px;">매출</th>
+                                <th>3,000,000 미만</th>
+                                <th>3,000,000</th>
+                                <th>4,500,000</th>
+                                <th>6,500,000</th>
+                                <th>8,500,000</th>
+                                <th>10,000,000</th>
+                                <th>12,000,000</th>
+                                <th>15,000,000</th>
+                                <th>20,000,000</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="table-secondary fw-bold">%</td>
+                                {% if my_sales is not none %}
+                                <td class="{% if my_sales < 3000000 %}table-success fw-bold{% endif %}">10%</td>
+                                <td class="{% if my_sales >= 3000000 and my_sales < 4500000 %}table-success fw-bold{% endif %}">30%</td>
+                                <td class="{% if my_sales >= 4500000 and my_sales < 6500000 %}table-success fw-bold{% endif %}">31%</td>
+                                <td class="{% if my_sales >= 6500000 and my_sales < 8500000 %}table-success fw-bold{% endif %}">32%</td>
+                                <td class="{% if my_sales >= 8500000 and my_sales < 10000000 %}table-success fw-bold{% endif %}">33%</td>
+                                <td class="{% if my_sales >= 10000000 and my_sales < 12000000 %}table-success fw-bold{% endif %}">34%</td>
+                                <td class="{% if my_sales >= 12000000 and my_sales < 15000000 %}table-success fw-bold{% endif %}">35%</td>
+                                <td class="{% if my_sales >= 15000000 and my_sales < 20000000 %}table-success fw-bold{% endif %}">35%</td>
+                                <td class="{% if my_sales >= 20000000 %}table-success fw-bold{% endif %}">35%</td>
+                                {% else %}
+                                <td>10%</td>
+                                <td>30%</td>
+                                <td>31%</td>
+                                <td>32%</td>
+                                <td>33%</td>
+                                <td>34%</td>
+                                <td>35%</td>
+                                <td>35%</td>
+                                <td>35%</td>
+                                {% endif %}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 수업료 근무외 -->
+    <div class="col-md-3">
+        <div class="card h-100 tier-card">
+            <div class="card-header">
+                <h6 class="mb-0">수업료 (근무외)</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm mb-0 text-center tier-table">
+                        <thead>
+                            <tr class="table-secondary">
+                                <th>매출</th>
+                                <th>%</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="{% if my_sales is not none and my_sales <= 5000000 %}table-success fw-bold{% endif %}">5,000,000 이하</td>
+                                <td class="{% if my_sales is not none and my_sales <= 5000000 %}table-success fw-bold{% endif %}">근무내 동일</td>
+                            </tr>
+                            <tr>
+                                <td class="{% if my_sales is not none and my_sales > 5000000 %}table-success fw-bold{% endif %}">5,000,000 초과</td>
+                                <td class="{% if my_sales is not none and my_sales > 5000000 %}table-success fw-bold{% endif %}">40%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% if user.role == 'trainer' %}
+<!-- Trainer's Salary Breakdown -->
+{% if trainers %}
+{% set trainer = trainers[0] %}
+{% set tax = (trainer.total_salary * 0.033)|int %}
+{% set final_salary = trainer.total_salary - tax %}
+
+<!-- 매출 Display -->
+<div class="card mb-2 sales-display">
+    <div class="card-body py-2 d-flex justify-content-between align-items-center bg-primary bg-opacity-10">
+        <span class="fw-bold text-primary">{{ selected_month }} 이번 달 매출</span>
+        <span class="fw-bold text-primary fs-6">₩{{ "{:,}".format(trainer.sales) }}</span>
+    </div>
+</div>
+
+<div class="card salary-breakdown">
+    <div class="card-header">
+        <h6 class="mb-0">{{ selected_month }} 급여</h6>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-bordered mb-0 table-sm">
+            <tbody>
+                <tr>
+                    <td class="bg-light fw-bold" style="width: 160px;">영업지원인센티브</td>
+                    <td class="{% if trainer.sales_support > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.sales_support) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">트레이너 인센티브</td>
+                    <td class="{% if trainer.incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.incentive) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">Master Trainer 보너스 <small class="text-muted">(6개월: ₩{{ "{:,}".format(trainer.six_month_sales) }})</small></td>
+                    <td class="{% if trainer.master_bonus > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.master_bonus) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">수업료 (근무내) <small class="text-muted">{{ trainer.lesson_fee_rate_main }}%</small></td>
+                    <td class="{% if trainer.lesson_fee_main > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.lesson_fee_main) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">수업료 (근무외) <small class="text-muted">{{ trainer.lesson_fee_rate_other }}%</small></td>
+                    <td class="{% if trainer.lesson_fee_other > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.lesson_fee_other) }}</td>
+                </tr>
+                {% if trainer.refund_deduction and trainer.refund_deduction > 0 %}
+                <tr>
+                    <td class="bg-light fw-bold text-danger">환불 차감액</td>
+                    <td class="text-danger fw-bold">-₩{{ "{:,}".format(trainer.refund_deduction) }}</td>
+                </tr>
+                {% endif %}
+            </tbody>
+            <tfoot>
+                <tr class="table-secondary">
+                    <th>세전 급여</th>
+                    <th>₩{{ "{:,}".format(trainer.total_salary) }}</th>
+                </tr>
+                <tr>
+                    <td class="bg-light">세금 (3.3%)</td>
+                    <td class="text-danger">-₩{{ "{:,}".format(tax) }}</td>
+                </tr>
+                <tr class="table-dark">
+                    <th>최종 급여</th>
+                    <th>₩{{ "{:,}".format(final_salary) }}</th>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% else %}
+<!-- Admin/Manager View -->
+{% if selected_trainer %}
+{% set tax = (selected_trainer.total_salary * 0.033)|int %}
+{% set final_salary = selected_trainer.total_salary - tax %}
+
+<!-- 매출 Display -->
+<div class="card mb-2 sales-display">
+    <div class="card-body py-2 d-flex justify-content-between align-items-center bg-primary bg-opacity-10">
+        <span class="fw-bold text-primary">{{ selected_trainer.name }} - {{ selected_month }} 이번 달 매출</span>
+        <span class="fw-bold text-primary fs-6">₩{{ "{:,}".format(selected_trainer.sales) }}</span>
+    </div>
+</div>
+
+<!-- Selected Trainer's Salary Breakdown -->
+<div class="card mb-3 salary-breakdown">
+    <div class="card-header">
+        <h6 class="mb-0">{{ selected_trainer.name }} - {{ selected_month }} 급여</h6>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-bordered mb-0 table-sm">
+            <tbody>
+                <tr>
+                    <td class="bg-light fw-bold" style="width: 160px;">영업지원인센티브</td>
+                    <td class="{% if selected_trainer.sales_support > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.sales_support) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">트레이너 인센티브</td>
+                    <td class="{% if selected_trainer.incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.incentive) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">Master Trainer 보너스 <small class="text-muted">(6개월: ₩{{ "{:,}".format(selected_trainer.six_month_sales) }})</small></td>
+                    <td class="{% if selected_trainer.master_bonus > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.master_bonus) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">수업료 (근무내) <small class="text-muted">{{ selected_trainer.lesson_fee_rate_main }}%</small></td>
+                    <td class="{% if selected_trainer.lesson_fee_main > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.lesson_fee_main) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">수업료 (근무외) <small class="text-muted">{{ selected_trainer.lesson_fee_rate_other }}%</small></td>
+                    <td class="{% if selected_trainer.lesson_fee_other > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.lesson_fee_other) }}</td>
+                </tr>
+                {% if selected_trainer.refund_deduction and selected_trainer.refund_deduction > 0 %}
+                <tr>
+                    <td class="bg-light fw-bold text-danger">환불 차감액</td>
+                    <td class="text-danger fw-bold">-₩{{ "{:,}".format(selected_trainer.refund_deduction) }}</td>
+                </tr>
+                {% endif %}
+            </tbody>
+            <tfoot>
+                <tr class="table-secondary">
+                    <th>세전 급여</th>
+                    <th>₩{{ "{:,}".format(selected_trainer.total_salary) }}</th>
+                </tr>
+                <tr>
+                    <td class="bg-light">세금 (3.3%)</td>
+                    <td class="text-danger">-₩{{ "{:,}".format(tax) }}</td>
+                </tr>
+                <tr class="table-dark">
+                    <th>최종 급여</th>
+                    <th>₩{{ "{:,}".format(final_salary) }}</th>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+</div>
+{% else %}
+<!-- Prompt to select trainer -->
+<div class="card">
+    <div class="card-body text-center py-5">
+        <p class="text-muted mb-0">
+            {% if user.role == 'main_admin' and not filter_branch_id %}
+            지점과 트레이너를 선택해주세요.
+            {% else %}
+            트레이너를 선택해주세요.
+            {% endif %}
+        </p>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

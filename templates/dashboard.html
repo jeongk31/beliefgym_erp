@@ -1,0 +1,329 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2>대시보드</h2>
+        <p class="text-muted mb-0">{{ current_month }} | {{ today }}</p>
+    </div>
+    <div class="text-end">
+        <span class="badge bg-{{ 'primary' if user.role == 'trainer' else 'success' if user.role == 'branch_admin' else 'danger' }} fs-6">
+            {% if user.role == 'trainer' %}트레이너{% elif user.role == 'branch_admin' %}지점관리자{% else %}최고관리자{% endif %}
+        </span>
+        <h5 class="mb-0 mt-1">{{ user.name }}님</h5>
+    </div>
+</div>
+
+<!-- Key Metrics Cards -->
+<div class="row g-3 mb-4">
+    <!-- Sales This Month -->
+    <div class="col-md-3 col-6">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <p class="text-muted mb-1 small">이번 달 매출</p>
+                        <h4 class="mb-0">₩{{ "{:,}".format(data.sales_this_month|int) }}</h4>
+                    </div>
+                    <div class="bg-primary bg-opacity-10 rounded p-2">
+                        <i class="bi bi-graph-up-arrow text-primary fs-4"></i>
+                    </div>
+                </div>
+                {% set sales_diff = data.sales_this_month - data.sales_last_month %}
+                {% if data.sales_last_month > 0 %}
+                {% set sales_pct = ((sales_diff / data.sales_last_month) * 100)|round(1) %}
+                <small class="{% if sales_diff >= 0 %}text-success{% else %}text-danger{% endif %}">
+                    <i class="bi bi-{% if sales_diff >= 0 %}arrow-up{% else %}arrow-down{% endif %}"></i>
+                    {{ sales_pct }}% vs 지난달
+                </small>
+                {% else %}
+                <small class="text-muted">지난달 데이터 없음</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- New Members This Month -->
+    <div class="col-md-3 col-6">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <p class="text-muted mb-1 small">이번 달 신규회원</p>
+                        <h4 class="mb-0">{{ data.new_members_this_month }}명</h4>
+                    </div>
+                    <div class="bg-success bg-opacity-10 rounded p-2">
+                        <i class="bi bi-person-plus text-success fs-4"></i>
+                    </div>
+                </div>
+                {% set member_diff = data.new_members_this_month - data.new_members_last_month %}
+                <small class="{% if member_diff >= 0 %}text-success{% else %}text-danger{% endif %}">
+                    <i class="bi bi-{% if member_diff >= 0 %}arrow-up{% else %}arrow-down{% endif %}"></i>
+                    {{ member_diff|abs }}명 vs 지난달
+                </small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sessions This Month -->
+    <div class="col-md-3 col-6">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <p class="text-muted mb-1 small">이번 달 완료 수업</p>
+                        <h4 class="mb-0">{{ data.sessions_this_month }}회</h4>
+                    </div>
+                    <div class="bg-warning bg-opacity-10 rounded p-2">
+                        <i class="bi bi-check-circle text-warning fs-4"></i>
+                    </div>
+                </div>
+                <small class="text-muted">총 완료된 세션</small>
+            </div>
+        </div>
+    </div>
+
+    <!-- Total Members / Trainers -->
+    <div class="col-md-3 col-6">
+        <div class="card h-100 border-0 shadow-sm">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        {% if user.role == 'trainer' %}
+                        <p class="text-muted mb-1 small">전체 회원 수</p>
+                        <h4 class="mb-0">{{ data.member_count }}명</h4>
+                        {% else %}
+                        <p class="text-muted mb-1 small">트레이너 수</p>
+                        <h4 class="mb-0">{{ data.trainer_count }}명</h4>
+                        {% endif %}
+                    </div>
+                    <div class="bg-info bg-opacity-10 rounded p-2">
+                        <i class="bi bi-people text-info fs-4"></i>
+                    </div>
+                </div>
+                {% if user.role == 'trainer' %}
+                <small class="text-muted">관리 중인 회원</small>
+                {% elif user.role == 'main_admin' %}
+                <small class="text-muted">{{ data.branch_count }}개 지점</small>
+                {% else %}
+                <small class="text-muted">우리 지점</small>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Left Column -->
+    <div class="col-lg-8">
+        {% if user.role == 'trainer' %}
+        <!-- Today's Schedule (Trainer Only) -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-calendar-day me-2"></i>오늘의 스케줄</h5>
+                <a href="{{ url_for('schedule') }}" class="btn btn-sm btn-outline-primary">전체보기</a>
+            </div>
+            <div class="card-body">
+                {% if data.today_schedules %}
+                <div class="list-group list-group-flush">
+                    {% for schedule in data.today_schedules %}
+                    <div class="list-group-item px-0 d-flex justify-content-between align-items-center">
+                        <div>
+                            <span class="badge {% if schedule.status == '수업 완료' %}bg-success{% elif schedule.status == '수업 취소' %}bg-danger{% else %}bg-warning text-dark{% endif %} me-2">
+                                {{ schedule.status or '수업 계획' }}
+                            </span>
+                            <strong>{{ schedule.member.member_name if schedule.member else '-' }}</strong>
+                        </div>
+                        <div class="text-end">
+                            <span class="text-muted">{{ schedule.start_time[:5] }} - {{ schedule.end_time[:5] }}</span>
+                            {% if schedule.work_type %}
+                            <span class="badge bg-secondary ms-2">{{ schedule.work_type }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="mt-3 text-center">
+                    <span class="badge bg-success">완료 {{ data.sessions_completed_today }}</span>
+                    <span class="badge bg-secondary ms-1">전체 {{ data.sessions_today }}</span>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-calendar-x fs-1"></i>
+                    <p class="mt-2 mb-0">오늘 예정된 수업이 없습니다</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if user.role in ['main_admin', 'branch_admin'] %}
+        <!-- Top Trainers (Admin Only) -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-trophy me-2"></i>이번 달 매출 Top 트레이너</h5>
+                <a href="{{ url_for('salary') }}" class="btn btn-sm btn-outline-primary">급여조회</a>
+            </div>
+            <div class="card-body">
+                {% if data.top_trainers %}
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>순위</th>
+                                <th>트레이너</th>
+                                <th class="text-end">매출</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for trainer in data.top_trainers %}
+                            <tr>
+                                <td>
+                                    {% if loop.index == 1 %}
+                                    <span class="badge bg-warning text-dark">1st</span>
+                                    {% elif loop.index == 2 %}
+                                    <span class="badge bg-secondary">2nd</span>
+                                    {% elif loop.index == 3 %}
+                                    <span class="badge bg-danger">3rd</span>
+                                    {% else %}
+                                    {{ loop.index }}
+                                    {% endif %}
+                                </td>
+                                <td><strong>{{ trainer.name }}</strong></td>
+                                <td class="text-end">₩{{ "{:,}".format(trainer.sales|int) }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-bar-chart fs-1"></i>
+                    <p class="mt-2 mb-0">이번 달 매출 데이터가 없습니다</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Recent Members -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-clock-history me-2"></i>최근 등록 회원</h5>
+                <a href="{{ url_for('members') }}" class="btn btn-sm btn-outline-primary">전체보기</a>
+            </div>
+            <div class="card-body">
+                {% if data.recent_members %}
+                <div class="list-group list-group-flush">
+                    {% for member in data.recent_members %}
+                    <a href="{{ url_for('view_member', member_id=member.id) }}" class="list-group-item list-group-item-action px-0 d-flex justify-content-between align-items-center">
+                        <div>
+                            <strong>{{ member.member_name }}</strong>
+                            <span class="badge bg-{{ 'primary' if member.channel == 'WI' else 'success' if member.channel == 'OT' else 'warning text-dark' if member.channel == '재등록' else 'info' }} ms-2">{{ member.channel }}</span>
+                        </div>
+                        <div class="text-end">
+                            <span class="text-muted small">{{ member.created_at[:10] }}</span>
+                            <br>
+                            <span class="fw-bold">{{ "{:,}".format(member.sessions * member.unit_price) }}원</span>
+                        </div>
+                    </a>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="text-center py-4 text-muted">
+                    <i class="bi bi-person-x fs-1"></i>
+                    <p class="mt-2 mb-0">등록된 회원이 없습니다</p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column - Quick Actions & Stats -->
+    <div class="col-lg-4">
+        <!-- Quick Actions -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-lightning me-2"></i>빠른 메뉴</h5>
+            </div>
+            <div class="card-body">
+                <div class="d-grid gap-2">
+                    <a href="{{ url_for('add_member') }}" class="btn btn-primary">
+                        <i class="bi bi-person-plus me-2"></i>새 회원 등록
+                    </a>
+                    <a href="{{ url_for('schedule') }}" class="btn btn-outline-success">
+                        <i class="bi bi-calendar-plus me-2"></i>스케줄 관리
+                    </a>
+                    <a href="{{ url_for('salary') }}" class="btn btn-outline-warning">
+                        <i class="bi bi-cash-stack me-2"></i>급여 조회
+                    </a>
+                    {% if user.role in ['main_admin', 'branch_admin'] %}
+                    <a href="{{ url_for('trainers') }}" class="btn btn-outline-info">
+                        <i class="bi bi-people me-2"></i>트레이너 관리
+                    </a>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Monthly Summary -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-header bg-white border-0">
+                <h5 class="mb-0"><i class="bi bi-bar-chart me-2"></i>월간 요약</h5>
+            </div>
+            <div class="card-body">
+                <ul class="list-group list-group-flush">
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        <span>이번 달 매출</span>
+                        <strong class="text-primary">₩{{ "{:,}".format(data.sales_this_month|int) }}</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        <span>지난 달 매출</span>
+                        <span class="text-muted">₩{{ "{:,}".format(data.sales_last_month|int) }}</span>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        <span>신규 회원</span>
+                        <strong class="text-success">{{ data.new_members_this_month }}명</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        <span>완료 수업</span>
+                        <strong class="text-warning">{{ data.sessions_this_month }}회</strong>
+                    </li>
+                    <li class="list-group-item d-flex justify-content-between align-items-center px-0">
+                        <span>전체 회원</span>
+                        <strong>{{ data.member_count }}명</strong>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        {% if user.role == 'trainer' %}
+        <!-- Incentive Preview -->
+        <div class="card border-0 shadow-sm bg-gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+            <div class="card-body text-white">
+                <h6 class="mb-3"><i class="bi bi-currency-dollar me-2"></i>예상 인센티브</h6>
+                {% set sales = data.sales_this_month %}
+                {% if sales >= 6000000 %}
+                    {% set incentive = 600000 %}
+                {% elif sales >= 5000000 %}
+                    {% set incentive = 500000 %}
+                {% elif sales >= 4000000 %}
+                    {% set incentive = 400000 %}
+                {% elif sales >= 3000000 %}
+                    {% set incentive = 250000 %}
+                {% elif sales >= 2000000 %}
+                    {% set incentive = 100000 %}
+                {% else %}
+                    {% set incentive = 0 %}
+                {% endif %}
+                <h3 class="mb-1">₩{{ "{:,}".format(incentive) }}</h3>
+                <small class="opacity-75">* 실제 급여는 급여조회에서 확인하세요</small>
+                <div class="mt-3">
+                    <a href="{{ url_for('salary') }}" class="btn btn-light btn-sm">급여 상세보기</a>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

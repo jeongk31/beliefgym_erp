@@ -1,0 +1,123 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-6 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h4>스케줄 추가</h4>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    {% if user.role in ['main_admin', 'branch_admin'] %}
+                    <div class="mb-3">
+                        <label for="trainer_id" class="form-label">트레이너 *</label>
+                        <select class="form-select" id="trainer_id" name="trainer_id" required onchange="filterMembers()">
+                            <option value="">선택하세요</option>
+                            {% for trainer in trainers %}
+                            <option value="{{ trainer.id }}">{{ trainer.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label for="member_id" class="form-label">회원 *</label>
+                        <select class="form-select" id="member_id" name="member_id" required>
+                            <option value="">선택하세요</option>
+                            {% for member in members %}
+                            <option value="{{ member.id }}" data-trainer="{{ member.trainer_id if member.trainer_id else '' }}">
+                                {{ member.member_name }}
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="schedule_date" class="form-label">날짜 *</label>
+                        <input type="date" class="form-control" id="schedule_date" name="schedule_date"
+                               value="{{ prefill_date }}" required>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label for="start_time" class="form-label">시작 시간 *</label>
+                            <select class="form-select" id="start_time" name="start_time" required onchange="updateEndTime()">
+                                {% for hour in range(6, 23) %}
+                                <option value="{{ '%02d:00'|format(hour) }}"
+                                        {% if prefill_time == '%02d:00'|format(hour) %}selected{% endif %}>
+                                    {{ '%02d:00'|format(hour) }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label for="end_time" class="form-label">종료 시간 *</label>
+                            <select class="form-select" id="end_time" name="end_time" required>
+                                {% for hour in range(7, 24) %}
+                                <option value="{{ '%02d:00'|format(hour) }}">
+                                    {{ '%02d:00'|format(hour) }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="notes" class="form-label">메모</label>
+                        <textarea class="form-control" id="notes" name="notes" rows="2"></textarea>
+                    </div>
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">스케줄 등록</button>
+                        <a href="{{ url_for('schedule') }}" class="btn btn-secondary">취소</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function updateEndTime() {
+    const startTime = document.getElementById('start_time').value;
+    const startHour = parseInt(startTime.split(':')[0]);
+    const endTimeSelect = document.getElementById('end_time');
+
+    // Set end time to 1 hour after start time
+    const endHour = startHour + 1;
+    if (endHour <= 23) {
+        endTimeSelect.value = String(endHour).padStart(2, '0') + ':00';
+    }
+}
+
+{% if user.role in ['main_admin', 'branch_admin'] %}
+function filterMembers() {
+    const trainerId = document.getElementById('trainer_id').value;
+    const memberSelect = document.getElementById('member_id');
+    const options = memberSelect.querySelectorAll('option');
+
+    options.forEach(option => {
+        if (option.value === '') {
+            option.style.display = '';
+            return;
+        }
+        const optionTrainerId = option.dataset.trainer;
+        if (!trainerId || optionTrainerId === trainerId) {
+            option.style.display = '';
+        } else {
+            option.style.display = 'none';
+        }
+    });
+
+    // Reset member selection
+    memberSelect.value = '';
+}
+{% endif %}
+
+// Initialize end time on page load
+document.addEventListener('DOMContentLoaded', function() {
+    updateEndTime();
+});
+</script>
+{% endblock %}
