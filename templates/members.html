@@ -41,7 +41,7 @@
                 <label class="col-form-label"><strong>트레이너:</strong></label>
             </div>
             <div class="col-auto">
-                <select name="trainer_id" id="trainerSelect" class="form-select form-select-sm" style="min-width: 150px;">
+                <select name="trainer_id" id="trainerSelect" class="form-select form-select-sm" style="min-width: 150px;" onchange="this.form.submit()">
                     <option value="">트레이너 선택</option>
                     {% for trainer in trainers %}
                     <option value="{{ trainer.id }}" {% if filter_trainer_id == trainer.id %}selected{% endif %}>
@@ -49,9 +49,6 @@
                     </option>
                     {% endfor %}
                 </select>
-            </div>
-            <div class="col-auto">
-                <button type="submit" class="btn btn-sm btn-primary">조회</button>
             </div>
             {% if filter_branch_id or filter_trainer_id %}
             <div class="col-auto">
@@ -85,17 +82,19 @@
                         <th rowspan="2" class="align-middle text-center sticky-col">회원명</th>
                         <th rowspan="2" class="align-middle text-center">서명</th>
                         <th rowspan="2" class="align-middle text-center">전화번호</th>
+                        {% if user.role == 'main_admin' %}
                         <th rowspan="2" class="align-middle text-center">결제수단</th>
+                        {% endif %}
                         <th rowspan="2" class="align-middle text-center">세션</th>
                         <th rowspan="2" class="align-middle text-center">단가</th>
                         <th rowspan="2" class="align-middle text-center">계약금액</th>
                         <th rowspan="2" class="align-middle text-center">경로</th>
-                        <th rowspan="2" class="align-middle text-center">누적세션</th>
+                        <th rowspan="2" class="align-middle text-center">소진세션</th>
                         <th rowspan="2" class="align-middle text-center">잔여</th>
                         {% if user.role != 'trainer' %}
                         <th rowspan="2" class="align-middle text-center">트레이너</th>
                         {% endif %}
-                        <th rowspan="2" class="align-middle text-center">근무</th>
+                        <th rowspan="2" class="align-middle text-center">수업</th>
                         <th colspan="{{ month_days|length }}" class="text-center">일별 세션 (완료)</th>
                     </tr>
                     <tr>
@@ -111,7 +110,7 @@
                     <tr class="{% if member.refund_status == 'refunded' %}refunded-row{% endif %}">
                         <td class="sticky-col" rowspan="2">
                             <a href="{{ url_for('view_member', member_id=member.id) }}" class="text-decoration-none">
-                                <strong>{{ member.member_name }}</strong>
+                                <strong>{{ member.display_name or member.member_name }}</strong>
                             </a>
                             {% if member.refund_status == 'refunded' %}
                             <span class="badge bg-danger ms-1">환불</span>
@@ -127,7 +126,9 @@
                             {% endif %}
                         </td>
                         <td class="text-center" rowspan="2">{{ member.phone }}</td>
+                        {% if user.role == 'main_admin' %}
                         <td class="text-center" rowspan="2">{{ member.payment_method }}</td>
+                        {% endif %}
                         <td class="text-center" rowspan="2">{{ member.sessions }}회</td>
                         <td class="text-end" rowspan="2">{{ "{:,}".format(member.unit_price) }}원</td>
                         <td class="text-end fw-bold" rowspan="2">{{ "{:,}".format(member.contract_amount) }}원</td>

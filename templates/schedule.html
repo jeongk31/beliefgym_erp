@@ -15,6 +15,13 @@
             <span class="d-none d-md-inline">- 스케줄 삭제</span>
             <span class="d-md-none">삭제</span>
         </button>
+        {% if user.role == 'main_admin' %}
+        <button type="button" class="btn btn-outline-secondary" id="editModeBtn" onclick="enterEditMode()">
+            <i class="bi bi-pencil d-md-none"></i>
+            <span class="d-none d-md-inline">스케줄 수정</span>
+            <span class="d-md-none">수정</span>
+        </button>
+        {% endif %}
     </div>
     {% endif %}
 </div>
@@ -38,7 +45,7 @@
                 <select id="selectedMember" class="form-select">
                     <option value="">-- 회원 선택 --</option>
                     {% for member in members %}
-                    <option value="{{ member.id }}">{{ member.member_name }}</option>
+                    <option value="{{ member.id }}">{{ member.display_name or member.member_name }}</option>
                     {% endfor %}
                 </select>
             </div>
@@ -70,53 +77,83 @@
         </div>
     </div>
 </div>
+
+{% if user.role == 'main_admin' %}
+<!-- Edit Mode Panel (Hidden by default) - main_admin only -->
+<div class="card mb-3 border-secondary" id="editModePanel" style="display: none;">
+    <div class="card-body py-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <span class="badge bg-secondary fs-6">스케줄 수정 모드</span>
+            </div>
+            <div class="col">
+                <span class="text-secondary">수정할 스케줄을 클릭하세요</span>
+            </div>
+            <div class="col-auto ms-auto">
+                <button type="button" class="btn btn-secondary" onclick="exitMode()">완료</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endif %}
 
-<!-- Week Navigation & Filters -->
-<div class="card mb-4 week-nav-card">
-    <div class="card-body py-3">
-        <!-- Mobile: Show date range at top -->
-        <div class="d-md-none text-center mb-3">
-            <h6 class="mb-0 fw-bold text-primary">
-                {{ week_days[0].date[:7] }}월 {{ week_days[0].day_num }}일 - {{ week_days[6].day_num }}일
-            </h6>
-        </div>
-
-        <div class="row align-items-center g-2 g-md-3">
-            <div class="col-12 col-md-4 order-2 order-md-1">
-                <div class="btn-group w-100 week-nav-btns">
-                    <a href="#" class="btn btn-outline-secondary" id="prevWeekBtn">
+<!-- Week Navigation & Filters - All in one row -->
+<div class="card mb-3 week-nav-card">
+    <div class="card-body py-2">
+        <form method="GET" id="scheduleFilterForm" class="row align-items-center g-2">
+            <!-- Week Navigation -->
+            <div class="col-auto">
+                <div class="d-flex align-items-center gap-1">
+                    <a href="#" class="btn btn-outline-secondary btn-sm px-2" id="prevWeekBtn">
                         <i class="bi bi-chevron-left"></i>
-                        <span class="d-none d-sm-inline">이전</span>
                     </a>
-                    <a href="{{ url_for('schedule', trainer_id=selected_trainer_id or '') }}" class="btn btn-outline-primary">오늘</a>
-                    <a href="#" class="btn btn-outline-secondary" id="nextWeekBtn">
-                        <span class="d-none d-sm-inline">다음</span>
+                    <a href="{{ url_for('schedule', trainer_id=selected_trainer_id or '', branch_id=filter_branch_id or '') }}" class="btn btn-outline-primary btn-sm">오늘</a>
+                    <span class="fw-bold text-primary mx-1 week-date-display">
+                        {{ week_days[0].date[5:7] }}월 {{ week_days[0].day_num }}일 - {{ week_days[6].day_num }}일
+                    </span>
+                    <a href="#" class="btn btn-outline-secondary btn-sm px-2" id="nextWeekBtn">
                         <i class="bi bi-chevron-right"></i>
                     </a>
                 </div>
             </div>
-            <div class="col-md-4 text-center d-none d-md-block order-md-2">
-                <h5 class="mb-0">
-                    {{ week_days[0].date[:7] }}월 {{ week_days[0].day_num }}일 - {{ week_days[6].day_num }}일
-                </h5>
-            </div>
+
             {% if user.role in ['main_admin', 'branch_admin'] %}
-            <div class="col-12 col-md-4 order-1 order-md-3">
-                <form method="GET">
-                    <select name="trainer_id" class="form-select" onchange="this.form.submit()">
-                        <option value="">-- 트레이너 선택 --</option>
-                        {% for trainer in trainers %}
-                        <option value="{{ trainer.id }}" {% if selected_trainer_id == trainer.id %}selected{% endif %}>
-                            {{ trainer.name }}
-                        </option>
-                        {% endfor %}
-                    </select>
-                    <input type="hidden" name="date" value="{{ selected_date }}">
-                </form>
+            <!-- Branch Filter (main_admin only) - hidden on mobile -->
+            {% if user.role == 'main_admin' %}
+            <div class="col-auto branch-filter">
+                <label class="col-form-label ms-2">지점:</label>
+            </div>
+            <div class="col-auto branch-filter">
+                <select name="branch_id" class="form-select form-select-sm" onchange="filterByBranch(this.value)">
+                    <option value="">전체</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if filter_branch_id == branch.id %}selected{% endif %}>
+                        {{ branch.name }}
+                    </option>
+                    {% endfor %}
+                </select>
             </div>
             {% endif %}
-        </div>
+
+            <!-- Trainer Filter -->
+            <div class="col-auto">
+                <label class="col-form-label {% if user.role != 'main_admin' %}ms-2{% endif %}">트레이너:</label>
+            </div>
+            <div class="col-auto">
+                <select name="trainer_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">선택</option>
+                    {% for trainer in trainers %}
+                    <option value="{{ trainer.id }}" {% if selected_trainer_id == trainer.id %}selected{% endif %}>
+                        {{ trainer.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+
+            <input type="hidden" name="date" value="{{ selected_date }}">
+        </form>
     </div>
 </div>
 
@@ -151,30 +188,22 @@
                             data-date="{{ day.date }}" data-time="{{ time_slot }}"
                             {% if schedule %}data-schedule-id="{{ schedule.id }}" data-status="{{ status }}" data-is-past="{{ 'true' if day.date < selected_date else 'false' }}" data-is-locked="{{ 'true' if is_locked else 'false' }}"{% endif %}>
                             {% if schedule %}
-                            <div class="schedule-item">
-                                <div class="fw-bold">{{ schedule.member.member_name }}</div>
-                                <small class="text-muted">
-                                    {{ schedule.start_time[:5] }} - {{ schedule.end_time[:5] }}
-                                </small>
-                                {% if user.role != 'trainer' and schedule.trainer %}
-                                <br><small class="text-info">{{ schedule.trainer.name }}</small>
-                                {% endif %}
-                                <div class="mt-1">
-                                    <span class="badge {% if status == '수업 계획' %}bg-warning text-dark{% elif status == '수업 완료' %}bg-success{% else %}bg-danger{% endif %}">
-                                        {{ status }}
+                            <div class="schedule-item {% if status == '수업 계획' %}clickable{% endif %}"
+                                 data-schedule-id="{{ schedule.id }}"
+                                 data-member-name="{{ schedule.member.display_name or schedule.member.member_name }}"
+                                 data-schedule-date="{{ schedule.schedule_date }}"
+                                 data-start-time="{{ schedule.start_time[:5] }}"
+                                 data-end-time="{{ schedule.end_time[:5] }}"
+                                 data-status="{{ status }}"
+                                 data-work-type="{{ schedule.work_type or '' }}"
+                                 onclick="handleScheduleClick(this)">
+                                <div class="schedule-name">{{ schedule.member.display_name or schedule.member.member_name }}</div>
+                                <div class="schedule-badges">
+                                    <span class="schedule-status {% if status == '수업 계획' %}status-planned{% elif status == '수업 완료' %}status-completed{% else %}status-cancelled{% endif %}">
+                                        {% if status == '수업 계획' %}계획{% elif status == '수업 완료' %}완료{% else %}취소{% endif %}
                                     </span>
                                     {% if schedule.work_type %}
-                                    <span class="badge bg-secondary">{{ schedule.work_type }}</span>
-                                    {% endif %}
-                                </div>
-                                <div class="schedule-actions mt-1">
-                                    {% if status == '수업 계획' %}
-                                    <a href="{{ url_for('complete_session', schedule_id=schedule.id) }}"
-                                       class="btn btn-sm btn-success">수업 완료</a>
-                                    <form method="POST" action="{{ url_for('cancel_session', schedule_id=schedule.id) }}"
-                                          style="display: inline;" onsubmit="return confirm('이 수업을 취소하시겠습니까?');">
-                                        <button type="submit" class="btn btn-sm btn-outline-danger">취소</button>
-                                    </form>
+                                    <span class="schedule-work-type">{{ 'M' if schedule.work_type == '근무내' else '외' }}</span>
                                     {% endif %}
                                 </div>
                             </div>
@@ -219,9 +248,10 @@
     vertical-align: middle;
 }
 .schedule-cell {
-    height: 100px;
+    height: 60px;
     position: relative;
     transition: background-color 0.2s;
+    padding: 1px !important;
 }
 .schedule-cell:hover {
     background-color: #f8f9fa;
@@ -235,14 +265,75 @@
 .schedule-cell.status-cancelled {
     background-color: #f8d7da;
 }
+/* Schedule item styling */
 .schedule-item {
-    font-size: 0.8rem;
-    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 4px 2px;
+    text-align: center;
+}
+.schedule-name {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 3px;
+    line-height: 1.2;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.schedule-badges {
+    display: flex;
+    gap: 3px;
+    justify-content: center;
+    align-items: center;
+}
+.schedule-status {
+    font-size: 0.6rem;
+    font-weight: 500;
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: -0.3px;
+}
+.schedule-status.status-planned {
+    background-color: #ffc107;
+    color: #000;
+}
+.schedule-status.status-completed {
+    background-color: #198754;
+    color: #fff;
+}
+.schedule-status.status-cancelled {
+    background-color: #dc3545;
+    color: #fff;
+}
+.schedule-work-type {
+    font-size: 0.55rem;
+    font-weight: 600;
+    padding: 2px 4px;
+    border-radius: 3px;
+    background-color: #6c757d;
+    color: #fff;
+}
+.schedule-cell {
+    position: relative;
+}
+/* Edit mode styling */
+body.edit-mode .schedule-cell.has-schedule .schedule-item {
+    cursor: pointer;
+}
+body.edit-mode .schedule-cell.has-schedule:hover {
+    outline: 2px solid #6c757d;
+    outline-offset: -2px;
 }
 .empty-slot {
     width: 100%;
     height: 100%;
-    min-height: 80px;
+    min-height: 45px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -305,23 +396,19 @@ body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule:not([data-is-lo
 body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule[data-is-locked="true"] {
     opacity: 0.5;
 }
-/* Normal mode actions */
-.schedule-actions {
-    opacity: 0;
-    transition: opacity 0.2s;
+/* Clickable schedule item */
+.schedule-item.clickable {
+    cursor: pointer;
+    transition: background-color 0.2s;
 }
-.schedule-cell:hover .schedule-actions {
-    opacity: 1;
+.schedule-item.clickable:hover {
+    background-color: rgba(0, 123, 255, 0.1);
+    border-radius: 4px;
 }
-.schedule-actions .btn {
-    padding: 0.15rem 0.4rem;
-    font-size: 0.7rem;
-    margin: 1px;
-}
-/* Hide actions in add/delete mode */
-body.add-mode .schedule-actions,
-body.delete-mode .schedule-actions {
-    display: none;
+/* Hide clickable cursor in add/delete mode */
+body.add-mode .schedule-item.clickable,
+body.delete-mode .schedule-item.clickable {
+    pointer-events: none;
 }
 /* Loading state */
 .schedule-cell.loading {
@@ -339,202 +426,256 @@ body.delete-mode .schedule-actions {
 
 /* ========== MOBILE RESPONSIVE STYLES ========== */
 @media (max-width: 768px) {
-    /* Header - stack title and buttons */
+    /* Header - compact with small buttons in corner */
     .schedule-header {
-        flex-direction: column;
-        gap: 12px;
+        flex-direction: row;
+        gap: 8px;
+        margin-bottom: 8px !important;
     }
     .schedule-header h2 {
-        font-size: 1.5rem;
+        font-size: 1.2rem;
+        margin: 0;
     }
     .schedule-action-btns {
-        width: 100%;
+        width: auto;
     }
     .schedule-action-btns .btn {
-        flex: 1;
-        padding: 10px 12px;
+        padding: 4px 8px;
+        font-size: 0.7rem;
     }
 
-    /* Week Navigation Card */
+    /* Hide status legend on mobile */
+    .status-legend {
+        display: none;
+    }
+
+    /* Week Navigation Card - Compact */
     .week-nav-card .card-body {
-        padding: 12px !important;
+        padding: 6px !important;
     }
-    .week-nav-btns .btn {
-        padding: 10px 8px;
-        font-size: 0.9rem;
+    .week-nav-card .row {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 4px;
+        justify-content: center;
     }
-
-    /* Mode Panels - Stack elements */
-    #addModePanel .row,
-    #deleteModePanel .row {
-        flex-direction: column;
-        gap: 10px;
+    .week-nav-card .col-auto {
+        width: auto;
     }
-    #addModePanel .row > div,
-    #deleteModePanel .row > div {
-        width: 100%;
-        margin: 0 !important;
+    .week-nav-card .d-flex {
+        justify-content: center;
+        gap: 4px !important;
     }
-    #addModePanel .col-md-4 {
-        order: 1;
+    .week-nav-card label {
+        display: none;
     }
-    #addModePanel .col-auto:last-child,
-    #deleteModePanel .col-auto:last-child {
-        order: 3;
-    }
-    #addModePanel .col-auto:last-child .btn,
-    #deleteModePanel .col-auto:last-child .btn {
-        width: 100%;
-    }
-    #addModeIndicator {
-        display: block !important;
-        text-align: center;
-        padding: 8px;
-        background: #e7f1ff;
-        border-radius: 6px;
-        margin-top: 8px;
-    }
-    #addModeIndicator[style*="display: none"] {
+    /* Hide branch filter on mobile - only show trainer */
+    .week-nav-card .branch-filter {
         display: none !important;
     }
+    .week-nav-card select {
+        width: auto;
+        min-width: 80px;
+        font-size: 0.75rem;
+        padding: 4px 6px;
+    }
+    .week-nav-card .btn {
+        padding: 4px 8px;
+        font-size: 0.75rem;
+    }
+    .week-date-display {
+        font-size: 0.75rem;
+    }
 
-    /* Schedule Table Container */
+    /* Mode Panels - Compact */
+    #addModePanel .card-body,
+    #deleteModePanel .card-body,
+    #editModePanel .card-body {
+        padding: 8px !important;
+    }
+    #addModePanel .row,
+    #deleteModePanel .row,
+    #editModePanel .row {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    #addModePanel .row > div,
+    #deleteModePanel .row > div,
+    #editModePanel .row > div {
+        width: auto;
+        margin: 0 !important;
+    }
+    #addModePanel .badge,
+    #deleteModePanel .badge,
+    #editModePanel .badge {
+        font-size: 0.7rem !important;
+        padding: 4px 8px;
+    }
+    #addModePanel select {
+        font-size: 0.75rem;
+        padding: 4px 6px;
+    }
+    #addModePanel .col-auto:last-child .btn,
+    #deleteModePanel .col-auto:last-child .btn,
+    #editModePanel .col-auto:last-child .btn {
+        width: auto;
+        padding: 4px 12px;
+        font-size: 0.75rem;
+    }
+    #addModeIndicator {
+        display: none !important;
+    }
+    #deleteModePanel .col,
+    #editModePanel .col {
+        display: none;
+    }
+
+    /* Schedule Table Container - No scroll */
     .schedule-card {
-        margin-bottom: 40px;
+        margin-bottom: 20px;
     }
     .table-responsive {
-        position: relative;
-        overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
-        margin-bottom: 5px;
+        overflow-x: hidden;
     }
 
-    /* Scroll hint */
+    /* Hide scroll hint on mobile */
     .scroll-hint {
-        text-align: center;
-        font-size: 0.75rem;
-        color: #6c757d;
-        padding: 8px 0;
-        background: linear-gradient(to right, transparent, #f8f9fa 20%, #f8f9fa 80%, transparent);
+        display: none;
     }
 
-    /* Schedule Table - Sticky time column */
+    /* Schedule Table - Fit to screen */
     .schedule-table {
-        min-width: 600px;
+        min-width: auto;
+        width: 100%;
+        table-layout: fixed;
     }
     .schedule-table thead th:first-child,
     .schedule-table tbody td:first-child {
-        position: sticky;
-        left: 0;
-        z-index: 5;
-        background: #f8f9fa;
-        box-shadow: 2px 0 4px rgba(0,0,0,0.1);
-    }
-    .schedule-table thead th:first-child {
-        z-index: 6;
+        position: static;
+        box-shadow: none;
     }
     .schedule-table th {
-        font-size: 0.75rem;
-        padding: 8px 4px;
-        min-width: 80px;
+        font-size: 0.55rem;
+        padding: 3px 1px;
+        min-width: auto;
     }
     .schedule-table th:first-child {
-        min-width: 55px;
-        width: 55px;
+        min-width: auto;
+        width: 24px;
+    }
+    /* Time column font size */
+    .schedule-table td:first-child {
+        font-size: 0.55rem;
+        padding: 2px 1px !important;
+        width: 24px;
+    }
+    .schedule-table td:first-child strong {
+        font-size: 0.55rem;
+        font-weight: 600;
     }
 
-    /* Schedule cells */
+    /* Schedule cells - Compact */
     .schedule-cell {
-        height: 90px;
-        min-width: 80px;
+        height: 48px;
+        min-width: auto;
+        padding: 1px !important;
     }
     .schedule-item {
-        font-size: 0.7rem;
-        padding: 3px;
+        padding: 2px 1px;
     }
-    .schedule-item .fw-bold {
-        font-size: 0.75rem;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        max-width: 70px;
-        display: block;
-    }
-    .schedule-item small {
-        font-size: 0.6rem;
-    }
-    .schedule-item .badge {
+    .schedule-name {
         font-size: 0.55rem;
-        padding: 2px 4px;
+        max-width: 100%;
+        margin-bottom: 1px;
     }
-
-    /* Actions - Always visible on mobile, larger touch targets */
-    .schedule-actions {
-        opacity: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
+    .schedule-badges {
+        gap: 1px;
     }
-    .schedule-actions .btn {
-        padding: 4px 6px;
-        font-size: 0.6rem;
-        min-height: 24px;
+    .schedule-status {
+        font-size: 0.45rem;
+        padding: 1px 3px;
+    }
+    .schedule-work-type {
+        font-size: 0.4rem;
+        padding: 1px 2px;
     }
 
     /* Empty slot */
     .empty-slot {
-        min-height: 70px;
+        min-height: 35px;
     }
     .empty-slot .add-hint {
-        width: 36px;
-        height: 36px;
-        line-height: 36px;
-        font-size: 1.4rem;
+        width: 20px;
+        height: 20px;
+        line-height: 20px;
+        font-size: 0.9rem;
     }
 
     /* Delete overlay */
     .delete-overlay .delete-icon {
-        font-size: 1.5rem;
-    }
-
-    /* Status legend - horizontal scroll friendly */
-    .status-legend {
-        display: flex;
-        gap: 8px;
-        overflow-x: auto;
-        padding-bottom: 4px;
-        -webkit-overflow-scrolling: touch;
-    }
-    .status-legend .badge {
-        font-size: 0.7rem;
-        white-space: nowrap;
-        flex-shrink: 0;
+        font-size: 1.2rem;
     }
 }
 
 /* Extra small devices */
 @media (max-width: 480px) {
     .schedule-header h2 {
-        font-size: 1.25rem;
+        font-size: 1rem;
+    }
+    .schedule-action-btns .btn {
+        padding: 3px 6px;
+        font-size: 0.65rem;
+    }
+    .week-nav-card .btn {
+        padding: 3px 6px;
+        font-size: 0.65rem;
+    }
+    .week-date-display {
+        font-size: 0.65rem;
+    }
+    .week-nav-card select {
+        min-width: 70px;
+        font-size: 0.65rem;
+        padding: 3px 4px;
     }
     .schedule-table th {
-        font-size: 0.65rem;
-        min-width: 70px;
+        font-size: 0.5rem;
+        padding: 2px 1px;
     }
     .schedule-table th:first-child {
-        min-width: 48px;
-        width: 48px;
+        width: 20px;
+    }
+    .schedule-table td:first-child {
+        font-size: 0.5rem;
+        width: 20px;
+    }
+    .schedule-table td:first-child strong {
+        font-size: 0.5rem;
     }
     .schedule-cell {
-        height: 85px;
-        min-width: 70px;
+        height: 44px;
     }
-    .schedule-item .fw-bold {
-        max-width: 60px;
+    .schedule-name {
+        font-size: 0.5rem;
+        margin-bottom: 1px;
     }
-    .week-nav-btns .btn {
+    .schedule-status {
+        font-size: 0.4rem;
+        padding: 1px 2px;
+    }
+    .schedule-work-type {
+        font-size: 0.35rem;
+        padding: 1px 2px;
+    }
+    .empty-slot {
+        min-height: 32px;
+    }
+    .empty-slot .add-hint {
+        width: 18px;
+        height: 18px;
+        line-height: 18px;
         font-size: 0.8rem;
-        padding: 8px 6px;
     }
 }
 </style>
@@ -543,6 +684,16 @@ body.delete-mode .schedule-actions {
 const todayDate = '{{ selected_date }}';
 const userRole = '{{ user.role }}';
 const isMainAdmin = userRole === 'main_admin';
+const selectedTrainerId = '{{ selected_trainer_id or "" }}';
+const filterBranchId = '{{ filter_branch_id or "" }}';
+
+function filterByBranch(branchId) {
+    // When branch changes, clear trainer selection and reload
+    const url = new URL(window.location);
+    url.searchParams.set('branch_id', branchId);
+    url.searchParams.delete('trainer_id'); // Reset trainer when branch changes
+    window.location.href = url.toString();
+}
 
 document.addEventListener('DOMContentLoaded', function() {
     // Add main_admin class to body for CSS targeting
@@ -552,15 +703,18 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const weekStart = new Date('{{ week_start }}');
 
+    // Build query params
+    let params = '';
+    if (selectedTrainerId) params += '&trainer_id=' + selectedTrainerId;
+    if (filterBranchId) params += '&branch_id=' + filterBranchId;
+
     // Previous week
     document.getElementById('prevWeekBtn').href = '{{ url_for("schedule") }}?date=' +
-        new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] +
-        '&trainer_id={{ selected_trainer_id or "" }}';
+        new Date(weekStart.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] + params;
 
     // Next week
     document.getElementById('nextWeekBtn').href = '{{ url_for("schedule") }}?date=' +
-        new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] +
-        '&trainer_id={{ selected_trainer_id or "" }}';
+        new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] + params;
 
     // Member selection change
     document.getElementById('selectedMember').addEventListener('change', function() {
@@ -595,6 +749,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     } else if (savedMode === 'delete') {
         enterDeleteMode(true); // true = restoring
+    } else if (savedMode === 'edit' && isMainAdmin) {
+        enterEditMode(true); // true = restoring
     }
 });
 
@@ -618,12 +774,29 @@ function enterDeleteMode(restoring = false) {
     }
 }
 
+function enterEditMode(restoring = false) {
+    if (!isMainAdmin) return;
+    exitMode(true); // silent exit
+    document.body.classList.add('edit-mode');
+    const editPanel = document.getElementById('editModePanel');
+    if (editPanel) editPanel.style.display = 'block';
+    const editBtn = document.getElementById('editModeBtn');
+    if (editBtn) editBtn.classList.add('active');
+    if (!restoring) {
+        sessionStorage.setItem('scheduleMode', 'edit');
+    }
+}
+
 function exitMode(silent = false) {
-    document.body.classList.remove('add-mode', 'delete-mode');
+    document.body.classList.remove('add-mode', 'delete-mode', 'edit-mode');
     document.getElementById('addModePanel').style.display = 'none';
     document.getElementById('deleteModePanel').style.display = 'none';
+    const editPanel = document.getElementById('editModePanel');
+    if (editPanel) editPanel.style.display = 'none';
     document.getElementById('addModeBtn').classList.remove('active');
     document.getElementById('deleteModeBtn').classList.remove('active');
+    const editBtn = document.getElementById('editModeBtn');
+    if (editBtn) editBtn.classList.remove('active');
     document.getElementById('selectedMember').value = '';
     document.getElementById('addModeIndicator').style.display = 'none';
 
@@ -632,6 +805,32 @@ function exitMode(silent = false) {
         sessionStorage.removeItem('scheduleMode');
         sessionStorage.removeItem('selectedMemberId');
         sessionStorage.removeItem('selectedMemberName');
+    }
+}
+
+function handleScheduleClick(element) {
+    // Don't do anything in add/delete mode
+    if (document.body.classList.contains('add-mode') || document.body.classList.contains('delete-mode')) {
+        return;
+    }
+
+    const scheduleId = element.dataset.scheduleId;
+    const memberName = element.dataset.memberName;
+    const scheduleDate = element.dataset.scheduleDate;
+    const startTime = element.dataset.startTime;
+    const endTime = element.dataset.endTime;
+    const status = element.dataset.status;
+    const workType = element.dataset.workType;
+
+    // Edit mode - open edit modal (main_admin only)
+    if (document.body.classList.contains('edit-mode') && isMainAdmin) {
+        openEditModal(scheduleId, memberName, scheduleDate, startTime, status, workType);
+        return;
+    }
+
+    // Normal mode - open complete modal only for 수업 계획 status
+    if (status === '수업 계획') {
+        openCompleteModal(scheduleId, memberName, scheduleDate, startTime, endTime);
     }
 }
 
@@ -726,5 +925,436 @@ function deleteSchedule(scheduleId, scheduleDate) {
         if (cell) cell.classList.remove('loading');
     });
 }
+
+// ===== Session Complete Modal Functions =====
+let currentScheduleId = null;
+let modalSignatureCanvas = null;
+let modalSignatureCtx = null;
+let isModalDrawing = false;
+let modalLastX = 0;
+let modalLastY = 0;
+
+function openCompleteModal(scheduleId, memberName, scheduleDate, startTime, endTime) {
+    // Don't open modal in add/delete mode
+    if (document.body.classList.contains('add-mode') || document.body.classList.contains('delete-mode')) {
+        return;
+    }
+
+    currentScheduleId = scheduleId;
+
+    // Populate modal info
+    document.getElementById('modalMemberName').textContent = memberName;
+    document.getElementById('modalScheduleDate').textContent = scheduleDate;
+    document.getElementById('modalScheduleTime').textContent = startTime + ' - ' + endTime;
+
+    // Reset form
+    document.querySelectorAll('input[name="modal_work_type"]').forEach(r => r.checked = false);
+    clearModalSignature();
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('completeSessionModal'));
+    modal.show();
+
+    // Initialize signature canvas after modal is shown
+    document.getElementById('completeSessionModal').addEventListener('shown.bs.modal', initModalSignature, { once: true });
+}
+
+function initModalSignature() {
+    modalSignatureCanvas = document.getElementById('modalSignatureCanvas');
+    modalSignatureCtx = modalSignatureCanvas.getContext('2d');
+
+    // Set up canvas
+    modalSignatureCtx.strokeStyle = '#000';
+    modalSignatureCtx.lineWidth = 2;
+    modalSignatureCtx.lineCap = 'round';
+    modalSignatureCtx.lineJoin = 'round';
+
+    // Fill with white background
+    modalSignatureCtx.fillStyle = '#fff';
+    modalSignatureCtx.fillRect(0, 0, modalSignatureCanvas.width, modalSignatureCanvas.height);
+
+    // Remove existing listeners to avoid duplicates
+    modalSignatureCanvas.removeEventListener('mousedown', startModalDrawing);
+    modalSignatureCanvas.removeEventListener('mousemove', modalDraw);
+    modalSignatureCanvas.removeEventListener('mouseup', stopModalDrawing);
+    modalSignatureCanvas.removeEventListener('mouseout', stopModalDrawing);
+    modalSignatureCanvas.removeEventListener('touchstart', startModalDrawing);
+    modalSignatureCanvas.removeEventListener('touchmove', modalDraw);
+    modalSignatureCanvas.removeEventListener('touchend', stopModalDrawing);
+
+    // Mouse events
+    modalSignatureCanvas.addEventListener('mousedown', startModalDrawing);
+    modalSignatureCanvas.addEventListener('mousemove', modalDraw);
+    modalSignatureCanvas.addEventListener('mouseup', stopModalDrawing);
+    modalSignatureCanvas.addEventListener('mouseout', stopModalDrawing);
+
+    // Touch events
+    modalSignatureCanvas.addEventListener('touchstart', startModalDrawing);
+    modalSignatureCanvas.addEventListener('touchmove', modalDraw);
+    modalSignatureCanvas.addEventListener('touchend', stopModalDrawing);
+}
+
+function getModalPosition(e) {
+    const rect = modalSignatureCanvas.getBoundingClientRect();
+    const scaleX = modalSignatureCanvas.width / rect.width;
+    const scaleY = modalSignatureCanvas.height / rect.height;
+
+    if (e.touches) {
+        return {
+            x: (e.touches[0].clientX - rect.left) * scaleX,
+            y: (e.touches[0].clientY - rect.top) * scaleY
+        };
+    }
+    return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+    };
+}
+
+function startModalDrawing(e) {
+    isModalDrawing = true;
+    const pos = getModalPosition(e);
+    modalLastX = pos.x;
+    modalLastY = pos.y;
+}
+
+function modalDraw(e) {
+    if (!isModalDrawing) return;
+    e.preventDefault();
+
+    const pos = getModalPosition(e);
+
+    modalSignatureCtx.beginPath();
+    modalSignatureCtx.moveTo(modalLastX, modalLastY);
+    modalSignatureCtx.lineTo(pos.x, pos.y);
+    modalSignatureCtx.stroke();
+
+    modalLastX = pos.x;
+    modalLastY = pos.y;
+
+    updateModalSignatureData();
+}
+
+function stopModalDrawing() {
+    isModalDrawing = false;
+}
+
+function updateModalSignatureData() {
+    const signatureData = modalSignatureCanvas.toDataURL('image/png');
+    document.getElementById('modal_signature').value = signatureData;
+}
+
+function clearModalSignature() {
+    if (modalSignatureCtx) {
+        modalSignatureCtx.fillStyle = '#fff';
+        modalSignatureCtx.fillRect(0, 0, modalSignatureCanvas.width, modalSignatureCanvas.height);
+    }
+    document.getElementById('modal_signature').value = '';
+}
+
+function submitCompleteSession() {
+    const workType = document.querySelector('input[name="modal_work_type"]:checked');
+    const signature = document.getElementById('modal_signature').value;
+
+    if (!workType) {
+        alert('근무 유형을 선택해주세요.');
+        return;
+    }
+
+    if (!signature) {
+        alert('회원 서명을 받아주세요.');
+        return;
+    }
+
+    // Disable buttons to prevent double submit
+    document.getElementById('modalCompleteBtn').disabled = true;
+    document.getElementById('modalCancelBtn').disabled = true;
+
+    fetch('{{ url_for("complete_session_ajax") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            schedule_id: currentScheduleId,
+            work_type: workType.value,
+            session_signature: signature
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '수업 완료 처리에 실패했습니다.');
+            document.getElementById('modalCompleteBtn').disabled = false;
+            document.getElementById('modalCancelBtn').disabled = false;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('수업 완료 처리 중 오류가 발생했습니다.');
+        document.getElementById('modalCompleteBtn').disabled = false;
+        document.getElementById('modalCancelBtn').disabled = false;
+    });
+}
+
+function submitCancelSession() {
+    if (!confirm('이 수업을 취소하시겠습니까?')) {
+        return;
+    }
+
+    // Disable buttons to prevent double submit
+    document.getElementById('modalCompleteBtn').disabled = true;
+    document.getElementById('modalCancelBtn').disabled = true;
+
+    fetch('{{ url_for("cancel_session_ajax") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            schedule_id: currentScheduleId
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '수업 취소에 실패했습니다.');
+            document.getElementById('modalCompleteBtn').disabled = false;
+            document.getElementById('modalCancelBtn').disabled = false;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('수업 취소 중 오류가 발생했습니다.');
+        document.getElementById('modalCompleteBtn').disabled = false;
+        document.getElementById('modalCancelBtn').disabled = false;
+    });
+}
+
+// ===== Admin Edit Modal Functions (main_admin only) =====
+let editScheduleId = null;
+
+function openEditModal(scheduleId, memberName, scheduleDate, startTime, currentStatus, currentWorkType) {
+    editScheduleId = scheduleId;
+
+    // Populate modal info
+    document.getElementById('editModalMemberName').textContent = memberName;
+    document.getElementById('editModalScheduleDate').textContent = scheduleDate;
+    document.getElementById('editModalScheduleTime').textContent = startTime;
+
+    // Set current status
+    document.getElementById('editStatus').value = currentStatus;
+
+    // Set current work type if exists
+    if (currentWorkType) {
+        document.getElementById('editWorkType').value = currentWorkType;
+    } else {
+        document.getElementById('editWorkType').value = '근무내';
+    }
+
+    // Show/hide work type based on status
+    toggleWorkTypeField();
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('editScheduleModal'));
+    modal.show();
+}
+
+function toggleWorkTypeField() {
+    const status = document.getElementById('editStatus').value;
+    const workTypeGroup = document.getElementById('editWorkTypeGroup');
+    if (status === '수업 완료') {
+        workTypeGroup.style.display = 'block';
+    } else {
+        workTypeGroup.style.display = 'none';
+    }
+}
+
+function submitEditSchedule() {
+    const status = document.getElementById('editStatus').value;
+    const workType = document.getElementById('editWorkType').value;
+    const btn = document.getElementById('editSaveBtn');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch('{{ url_for("edit_schedule_status") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            schedule_id: editScheduleId,
+            status: status,
+            work_type: workType
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '상태 변경에 실패했습니다.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-save"></i> 저장';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('상태 변경 중 오류가 발생했습니다.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save"></i> 저장';
+    });
+}
 </script>
+
+<!-- Session Complete Modal -->
+<div class="modal fade" id="completeSessionModal" tabindex="-1" aria-labelledby="completeSessionModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="completeSessionModalLabel">수업 완료 처리</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Session Info -->
+                <div class="alert alert-info mb-3">
+                    <div class="row">
+                        <div class="col-6">
+                            <strong>회원명:</strong> <span id="modalMemberName"></span>
+                        </div>
+                        <div class="col-6">
+                            <strong>날짜:</strong> <span id="modalScheduleDate"></span>
+                        </div>
+                    </div>
+                    <div class="row mt-1">
+                        <div class="col-12">
+                            <strong>시간:</strong> <span id="modalScheduleTime"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Work Type Selection -->
+                <div class="mb-3">
+                    <label class="form-label"><strong>근무 유형 *</strong></label>
+                    <div class="d-flex gap-3">
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="modal_work_type"
+                                   id="modalWorkTypeIn" value="근무내">
+                            <label class="form-check-label btn btn-outline-primary px-4 py-2" for="modalWorkTypeIn">
+                                Main
+                            </label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="modal_work_type"
+                                   id="modalWorkTypeOut" value="근무외">
+                            <label class="form-check-label btn btn-outline-secondary px-4 py-2" for="modalWorkTypeOut">
+                                그 외
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Signature Pad -->
+                <div class="mb-3">
+                    <label class="form-label"><strong>회원 서명 *</strong></label>
+                    <p class="text-muted small mb-2">회원에게 아래에 서명을 받아주세요.</p>
+                    <div class="signature-container border rounded p-2 bg-white">
+                        <canvas id="modalSignatureCanvas" width="380" height="130"
+                                style="width: 100%; border: 1px solid #ccc; border-radius: 4px; touch-action: none;"></canvas>
+                    </div>
+                    <input type="hidden" id="modal_signature">
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearModalSignature()">
+                        서명 지우기
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-danger" id="modalCancelBtn" onclick="submitCancelSession()">
+                    <i class="bi bi-x-circle"></i> 수업 취소
+                </button>
+                <div>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
+                    <button type="button" class="btn btn-success" id="modalCompleteBtn" onclick="submitCompleteSession()">
+                        <i class="bi bi-check-circle"></i> 수업 완료
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Admin Edit Schedule Modal (main_admin only) -->
+{% if user.role == 'main_admin' %}
+<div class="modal fade" id="editScheduleModal" tabindex="-1" aria-labelledby="editScheduleModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="editScheduleModalLabel">
+                    <i class="bi bi-pencil-square"></i> 스케줄 수정
+                </h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <!-- Schedule Info -->
+                <div class="alert alert-secondary py-2 mb-3">
+                    <small>
+                        <strong>회원:</strong> <span id="editModalMemberName"></span><br>
+                        <strong>날짜:</strong> <span id="editModalScheduleDate"></span><br>
+                        <strong>시간:</strong> <span id="editModalScheduleTime"></span>
+                    </small>
+                </div>
+
+                <!-- Status Selection -->
+                <div class="mb-3">
+                    <label class="form-label"><strong>상태</strong></label>
+                    <select class="form-select" id="editStatus" onchange="toggleWorkTypeField()">
+                        <option value="수업 계획">수업 계획</option>
+                        <option value="수업 완료">수업 완료</option>
+                        <option value="수업 취소">수업 취소</option>
+                    </select>
+                </div>
+
+                <!-- Work Type (shown only when status is 수업 완료) -->
+                <div class="mb-3" id="editWorkTypeGroup" style="display: none;">
+                    <label class="form-label"><strong>근무 유형</strong></label>
+                    <select class="form-select" id="editWorkType">
+                        <option value="근무내">Main (근무내)</option>
+                        <option value="근무외">그 외 (근무외)</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary btn-sm" id="editSaveBtn" onclick="submitEditSchedule()">
+                    <i class="bi bi-save"></i> 저장
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+/* Modal Styles */
+#completeSessionModal .form-check-inline .form-check-input {
+    display: none;
+}
+#completeSessionModal .form-check-inline .form-check-input:checked + .form-check-label {
+    background-color: #0d6efd;
+    color: white;
+    border-color: #0d6efd;
+}
+#completeSessionModal .form-check-inline .form-check-input[value="근무외"]:checked + .form-check-label {
+    background-color: #6c757d;
+    border-color: #6c757d;
+}
+#completeSessionModal .signature-container {
+    background-color: #f8f9fa;
+}
+</style>
 {% endblock %}

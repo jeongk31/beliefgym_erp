@@ -37,6 +37,114 @@ def role_required(*roles):
     return decorator
 
 
+def get_display_name(member, all_members_for_trainer):
+    """
+    Returns display name with phone suffix if there are duplicate names for the same trainer.
+    Format: "이름 (1234)" where 1234 is last 4 digits of phone
+    """
+    member_name = member['member_name']
+    trainer_id = member['trainer_id']
+
+    # Count members with same name under same trainer
+    same_name_members = [m for m in all_members_for_trainer
+                         if m['member_name'] == member_name and m['trainer_id'] == trainer_id]
+
+    if len(same_name_members) > 1:
+        # Multiple members with same name - add phone suffix
+        phone = member.get('phone', '')
+        phone_suffix = phone[-4:] if len(phone) >= 4 else phone
+        return f"{member_name} ({phone_suffix})"
+
+    return member_name
+
+
+def add_display_names_to_members(members):
+    """
+    Adds display_name field to each member in the list.
+    Groups by trainer_id to detect duplicates per trainer.
+    """
+    for member in members:
+        member['display_name'] = get_display_name(member, members)
+    return members
+
+
+def deduplicate_members_for_dropdown(members):
+    """
+    Deduplicates members with the same name + phone (same person with multiple entries).
+    Returns only one entry per unique person, keeping the oldest entry.
+    This is used for schedule dropdowns where we treat same name+phone as one person.
+    """
+    # Group by (trainer_id, member_name, phone)
+    person_map = {}
+    for member in members:
+        key = (member.get('trainer_id'), member.get('member_name'), member.get('phone', ''))
+        if key not in person_map:
+            person_map[key] = member
+        else:
+            # Keep the one with older created_at if available, otherwise keep first
+            existing = person_map[key]
+            if member.get('created_at') and existing.get('created_at'):
+                if member['created_at'] < existing['created_at']:
+                    person_map[key] = member
+
+    return list(person_map.values())
+
+
+def get_remaining_sessions_for_person(member_name, phone, trainer_id):
+    """
+    Get total remaining sessions for a person (same name + phone) under a trainer.
+    Returns dict with total_remaining, entries (sorted by created_at), and entry with available sessions.
+    """
+    # Get all member entries with same name, phone, trainer
+    response = supabase.table('members').select('id, member_name, phone, sessions, created_at, trainer_id').eq('trainer_id', trainer_id).eq('member_name', member_name).eq('phone', phone).order('created_at').execute()
+    entries = response.data if response.data else []
+
+    if not entries:
+        return {'total_remaining': 0, 'entries': [], 'available_entry': None}
+
+    # Get completed sessions count for each entry
+    entry_ids = [e['id'] for e in entries]
+    completed_response = supabase.table('schedules').select('member_id').in_('member_id', entry_ids).eq('status', '수업 완료').execute()
+    completed_schedules = completed_response.data if completed_response.data else []
+
+    # Also count planned schedules (not yet completed but scheduled)
+    planned_response = supabase.table('schedules').select('member_id').in_('member_id', entry_ids).eq('status', '수업 계획').execute()
+    planned_schedules = planned_response.data if planned_response.data else []
+
+    # Count per entry
+    completed_counts = {}
+    planned_counts = {}
+    for s in completed_schedules:
+        mid = s['member_id']
+        completed_counts[mid] = completed_counts.get(mid, 0) + 1
+    for s in planned_schedules:
+        mid = s['member_id']
+        planned_counts[mid] = planned_counts.get(mid, 0) + 1
+
+    total_remaining = 0
+    available_entry = None
+
+    for entry in entries:
+        completed = completed_counts.get(entry['id'], 0)
+        planned = planned_counts.get(entry['id'], 0)
+        used = completed + planned
+        remaining = entry['sessions'] - used
+        entry['completed_sessions'] = completed
+        entry['planned_sessions'] = planned
+        entry['remaining_sessions'] = remaining
+        total_remaining += max(0, remaining)
+
+        # Find first entry with available sessions (oldest first)
+        if available_entry is None and remaining > 0:
+            available_entry = entry
+
+    return {
+        'total_remaining': total_remaining,
+        'entries': entries,
+        'available_entry': available_entry
+    }
+
+
 @app.route('/')
 def index():
     if 'user' in session:
@@ -399,6 +507,9 @@ def members():
         member['remaining_sessions'] = member['sessions'] - member['completed_sessions']
         member['schedule_map'] = schedule_map.get(member['id'], {})
 
+    # Add display_name for duplicate name detection
+    add_display_names_to_members(members_list)
+
     return render_template('members.html',
                          user=user,
                          members=members_list,
@@ -703,10 +814,20 @@ def schedule():
 
     # Get trainers list for admin filter
     trainers_list = []
+    branches_list = []
     selected_trainer_id = request.args.get('trainer_id')
+    filter_branch_id = request.args.get('branch_id')
 
     if user['role'] == 'main_admin':
-        trainers_response = supabase.table('users').select('id, name').eq('role', 'trainer').execute()
+        # Get all branches for filter
+        branches_response = supabase.table('branches').select('*').order('name').execute()
+        branches_list = branches_response.data if branches_response.data else []
+
+        # Filter trainers by branch if selected
+        if filter_branch_id:
+            trainers_response = supabase.table('users').select('id, name').eq('role', 'trainer').eq('branch_id', filter_branch_id).execute()
+        else:
+            trainers_response = supabase.table('users').select('id, name').eq('role', 'trainer').execute()
         trainers_list = trainers_response.data if trainers_response.data else []
     elif user['role'] == 'branch_admin':
         trainers_response = supabase.table('users').select('id, name').eq('role', 'trainer').eq('branch_id', user['branch_id']).execute()
@@ -722,7 +843,7 @@ def schedule():
 
     # Build query
     query = supabase.table('schedules').select(
-        '*, member:members!schedules_member_id_fkey(member_name), trainer:users!schedules_trainer_id_fkey(name)'
+        '*, member:members!schedules_member_id_fkey(member_name, phone, trainer_id), trainer:users!schedules_trainer_id_fkey(name)'
     ).gte('schedule_date', week_start.isoformat()).lte('schedule_date', week_end.isoformat())
 
     if query_trainer_id:
@@ -736,6 +857,26 @@ def schedule():
 
     response = query.order('schedule_date').order('start_time').execute()
     schedules = response.data if response.data else []
+
+    # Collect all members from schedules for duplicate name detection
+    schedule_members = []
+    for s in schedules:
+        if s.get('member'):
+            schedule_members.append({
+                'member_name': s['member'].get('member_name'),
+                'phone': s['member'].get('phone', ''),
+                'trainer_id': s.get('trainer_id')
+            })
+
+    # Add display_name to each schedule's member
+    for s in schedules:
+        if s.get('member'):
+            member_info = {
+                'member_name': s['member'].get('member_name'),
+                'phone': s['member'].get('phone', ''),
+                'trainer_id': s.get('trainer_id')
+            }
+            s['member']['display_name'] = get_display_name(member_info, schedule_members)
 
     # Organize schedules by date and time
     schedule_grid = {}
@@ -767,17 +908,21 @@ def schedule():
             'is_today': day == datetime.now(KST).date()
         })
 
-    # Get members for quick-add feature
+    # Get members for quick-add feature (only for selected trainer)
+    members_list = []
     if user['role'] == 'trainer':
-        members_response = supabase.table('members').select('id, member_name').eq('trainer_id', user['id']).execute()
-    elif user['role'] == 'main_admin':
-        members_response = supabase.table('members').select('id, member_name, trainer_id').execute()
-    else:  # branch_admin
-        branch_trainers = supabase.table('users').select('id').eq('branch_id', user['branch_id']).execute()
-        trainer_ids = [t['id'] for t in branch_trainers.data] if branch_trainers.data else []
-        members_response = supabase.table('members').select('id, member_name, trainer_id').in_('trainer_id', trainer_ids).execute()
+        members_response = supabase.table('members').select('id, member_name, phone, trainer_id, created_at').eq('trainer_id', user['id']).order('created_at').execute()
+        members_list = members_response.data if members_response.data else []
+    elif selected_trainer_id:
+        # For admins, only load members of the selected trainer
+        members_response = supabase.table('members').select('id, member_name, phone, trainer_id, created_at').eq('trainer_id', selected_trainer_id).order('created_at').execute()
+        members_list = members_response.data if members_response.data else []
 
-    members_list = members_response.data if members_response.data else []
+    # Deduplicate members with same name+phone (show only once per person)
+    members_list = deduplicate_members_for_dropdown(members_list)
+
+    # Add display_name for duplicate name detection
+    add_display_names_to_members(members_list)
 
     return render_template('schedule.html',
                          user=user,
@@ -787,7 +932,9 @@ def schedule():
                          selected_date=selected_date.isoformat(),
                          week_start=week_start.isoformat(),
                          trainers=trainers_list,
+                         branches=branches_list,
                          selected_trainer_id=selected_trainer_id,
+                         filter_branch_id=filter_branch_id,
                          members=members_list)
 
 
@@ -798,16 +945,22 @@ def add_schedule():
 
     # Get members for this trainer
     if user['role'] == 'trainer':
-        members_response = supabase.table('members').select('id, member_name').eq('trainer_id', user['id']).execute()
+        members_response = supabase.table('members').select('id, member_name, phone, trainer_id, created_at').eq('trainer_id', user['id']).order('created_at').execute()
     elif user['role'] in ['main_admin', 'branch_admin']:
         if user['role'] == 'main_admin':
-            members_response = supabase.table('members').select('id, member_name, trainer_id').execute()
+            members_response = supabase.table('members').select('id, member_name, phone, trainer_id, created_at').order('created_at').execute()
         else:
             trainers = supabase.table('users').select('id').eq('branch_id', user['branch_id']).execute()
             trainer_ids = [t['id'] for t in trainers.data] if trainers.data else []
-            members_response = supabase.table('members').select('id, member_name, trainer_id').in_('trainer_id', trainer_ids).execute()
+            members_response = supabase.table('members').select('id, member_name, phone, trainer_id, created_at').in_('trainer_id', trainer_ids).order('created_at').execute()
 
     members_list = members_response.data if members_response.data else []
+
+    # Deduplicate members with same name+phone (show only once per person)
+    members_list = deduplicate_members_for_dropdown(members_list)
+
+    # Add display_name for duplicate name detection
+    add_display_names_to_members(members_list)
 
     # Get trainers for admin
     trainers_list = []
@@ -993,6 +1146,135 @@ def cancel_session(schedule_id):
     return redirect(url_for('schedule', date=schedule_item['schedule_date']))
 
 
+@app.route('/schedule/complete-ajax', methods=['POST'])
+@login_required
+def complete_session_ajax():
+    """AJAX endpoint for completing a session from the popup modal"""
+    user = session['user']
+    data = request.get_json()
+
+    schedule_id = data.get('schedule_id')
+    work_type = data.get('work_type')
+    session_signature = data.get('session_signature')
+
+    if not schedule_id:
+        return jsonify({'success': False, 'error': '스케줄 ID가 필요합니다.'}), 400
+
+    if not work_type:
+        return jsonify({'success': False, 'error': '근무 유형을 선택해주세요.'}), 400
+
+    if not session_signature:
+        return jsonify({'success': False, 'error': '회원 서명을 받아주세요.'}), 400
+
+    # Get schedule details
+    schedule_response = supabase.table('schedules').select('*').eq('id', schedule_id).execute()
+
+    if not schedule_response.data:
+        return jsonify({'success': False, 'error': '스케줄을 찾을 수 없습니다.'}), 404
+
+    schedule_item = schedule_response.data[0]
+
+    # Check permission - only trainer who owns it can complete
+    if user['role'] == 'trainer' and schedule_item['trainer_id'] != user['id']:
+        return jsonify({'success': False, 'error': '완료 권한이 없습니다.'}), 403
+
+    # Check if already completed or cancelled
+    if schedule_item.get('status') != '수업 계획':
+        return jsonify({'success': False, 'error': '이미 처리된 수업입니다.'}), 400
+
+    try:
+        supabase.table('schedules').update({
+            'status': '수업 완료',
+            'work_type': work_type,
+            'session_signature': session_signature,
+            'completed_at': datetime.now().isoformat()
+        }).eq('id', schedule_id).execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'수업 완료 처리 중 오류가 발생했습니다: {str(e)}'}), 500
+
+
+@app.route('/schedule/cancel-ajax', methods=['POST'])
+@login_required
+def cancel_session_ajax():
+    """AJAX endpoint for cancelling a session from the popup modal"""
+    user = session['user']
+    data = request.get_json()
+
+    schedule_id = data.get('schedule_id')
+
+    if not schedule_id:
+        return jsonify({'success': False, 'error': '스케줄 ID가 필요합니다.'}), 400
+
+    # Get schedule details
+    schedule_response = supabase.table('schedules').select('*').eq('id', schedule_id).execute()
+
+    if not schedule_response.data:
+        return jsonify({'success': False, 'error': '스케줄을 찾을 수 없습니다.'}), 404
+
+    schedule_item = schedule_response.data[0]
+
+    # Check permission
+    if user['role'] == 'trainer' and schedule_item['trainer_id'] != user['id']:
+        return jsonify({'success': False, 'error': '취소 권한이 없습니다.'}), 403
+
+    # Check if already completed or cancelled
+    if schedule_item.get('status') != '수업 계획':
+        return jsonify({'success': False, 'error': '이미 처리된 수업입니다.'}), 400
+
+    try:
+        supabase.table('schedules').update({
+            'status': '수업 취소'
+        }).eq('id', schedule_id).execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'수업 취소 중 오류가 발생했습니다: {str(e)}'}), 500
+
+
+@app.route('/schedule/edit-status', methods=['POST'])
+@role_required('main_admin')
+def edit_schedule_status():
+    """AJAX endpoint for main_admin to edit any schedule status"""
+    data = request.get_json()
+
+    schedule_id = data.get('schedule_id')
+    new_status = data.get('status')
+    work_type = data.get('work_type')
+
+    if not schedule_id:
+        return jsonify({'success': False, 'error': '스케줄 ID가 필요합니다.'}), 400
+
+    if new_status not in ['수업 계획', '수업 완료', '수업 취소']:
+        return jsonify({'success': False, 'error': '유효하지 않은 상태입니다.'}), 400
+
+    # Get schedule details
+    schedule_response = supabase.table('schedules').select('*').eq('id', schedule_id).execute()
+
+    if not schedule_response.data:
+        return jsonify({'success': False, 'error': '스케줄을 찾을 수 없습니다.'}), 404
+
+    try:
+        update_data = {'status': new_status}
+
+        # If changing to 수업 완료, set work_type and completed_at
+        if new_status == '수업 완료':
+            update_data['work_type'] = work_type if work_type else '근무내'
+            update_data['completed_at'] = datetime.now().isoformat()
+        # If changing away from 수업 완료, clear work_type
+        elif new_status == '수업 계획':
+            update_data['work_type'] = None
+            update_data['completed_at'] = None
+            update_data['session_signature'] = None
+
+        supabase.table('schedules').update(update_data).eq('id', schedule_id).execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'상태 변경 중 오류가 발생했습니다: {str(e)}'}), 500
+
+
 @app.route('/schedule/quick-add', methods=['POST'])
 @login_required
 def quick_add_schedule():
@@ -1028,10 +1310,28 @@ def quick_add_schedule():
         # Admin uses the member's assigned trainer
         trainer_id = member['trainer_id']
 
+    # Check remaining sessions for this person (same name + phone)
+    session_info = get_remaining_sessions_for_person(
+        member['member_name'],
+        member['phone'],
+        trainer_id
+    )
+
+    if session_info['total_remaining'] <= 0:
+        return jsonify({
+            'success': False,
+            'error': f"'{member['member_name']}' 회원의 잔여 세션이 없습니다. 새로운 회원 등록을 먼저 진행해주세요."
+        }), 400
+
+    # Use the oldest entry with available sessions
+    target_member_id = member_id
+    if session_info['available_entry']:
+        target_member_id = session_info['available_entry']['id']
+
     try:
         schedule_data = {
             'trainer_id': trainer_id,
-            'member_id': member_id,
+            'member_id': target_member_id,
             'schedule_date': schedule_date,
             'start_time': start_time,
             'end_time': end_time,
@@ -1098,7 +1398,8 @@ def quick_delete_schedule():
 
 
 # Salary / Incentive calculation
-INCENTIVE_TIERS = [
+# Default tiers (used if no settings in database)
+DEFAULT_INCENTIVE_TIERS = [
     (20000000, 5400000),
     (15000000, 4050000),
     (12000000, 3040000),
@@ -1109,33 +1410,7 @@ INCENTIVE_TIERS = [
     (3000000, 480000),
 ]
 
-
-def calculate_incentive(sales_amount):
-    """Calculate incentive based on sales tier"""
-    for tier_threshold, incentive in INCENTIVE_TIERS:
-        if sales_amount >= tier_threshold:
-            return incentive
-    return 0
-
-
-def calculate_sales_support_incentive(sales_amount):
-    """Calculate 영업지원인센티브 based on sales"""
-    if sales_amount > 3000000:
-        return 1000000
-    elif sales_amount > 0:
-        return 500000
-    return 0
-
-
-def calculate_master_trainer_bonus(six_month_sales):
-    """Calculate Master Trainer 진급 bonus based on 6-month total sales"""
-    if six_month_sales >= 9000000:
-        return 300000
-    return 0
-
-
-# Lesson fee (수업료) percentage tiers based on 매출
-LESSON_FEE_TIERS = [
+DEFAULT_LESSON_FEE_TIERS = [
     (20000000, 35),
     (15000000, 35),
     (12000000, 35),
@@ -1147,19 +1422,92 @@ LESSON_FEE_TIERS = [
 ]
 
 
-def calculate_lesson_fee_rate(sales_amount):
+def get_salary_settings():
+    """Load salary settings from database, or return defaults if not found"""
+    try:
+        response = supabase.table('salary_settings').select('*').execute()
+        if response.data and len(response.data) > 0:
+            settings = response.data[0]
+            # Convert stored JSON arrays to tuples and sort by threshold descending
+            # (calculation functions expect highest threshold first)
+            incentive_tiers = [(t['threshold'], t['incentive']) for t in settings.get('incentive_tiers', [])]
+            lesson_fee_tiers = [(t['threshold'], t['rate']) for t in settings.get('lesson_fee_tiers', [])]
+
+            # Filter out the "under minimum" tier (tier 0 with incentive 0) and sort descending
+            if incentive_tiers:
+                incentive_tiers = [t for t in incentive_tiers if t[1] > 0 or t[0] > incentive_tiers[0][0]]
+                incentive_tiers = sorted(incentive_tiers, key=lambda x: x[0], reverse=True)
+            if lesson_fee_tiers:
+                # For lesson fees, keep all tiers but sort descending
+                lesson_fee_tiers = sorted(lesson_fee_tiers, key=lambda x: x[0], reverse=True)
+
+            return {
+                'incentive_tiers': incentive_tiers if incentive_tiers else DEFAULT_INCENTIVE_TIERS,
+                'lesson_fee_tiers': lesson_fee_tiers if lesson_fee_tiers else DEFAULT_LESSON_FEE_TIERS,
+                'master_threshold': settings.get('master_threshold', 9000000),
+                'master_bonus': settings.get('master_bonus', 300000),
+                'other_threshold': settings.get('other_threshold', 5000000),
+                'other_rate': settings.get('other_rate', 40)
+            }
+    except Exception as e:
+        print(f"Error loading salary settings: {e}")
+
+    # Return defaults if no settings found or error
+    return {
+        'incentive_tiers': DEFAULT_INCENTIVE_TIERS,
+        'lesson_fee_tiers': DEFAULT_LESSON_FEE_TIERS,
+        'master_threshold': 9000000,
+        'master_bonus': 300000,
+        'other_threshold': 5000000,
+        'other_rate': 40
+    }
+
+
+def calculate_incentive(sales_amount, settings=None):
+    """Calculate incentive based on sales tier"""
+    if settings is None:
+        settings = get_salary_settings()
+    incentive_tiers = settings.get('incentive_tiers', DEFAULT_INCENTIVE_TIERS)
+    for tier_threshold, incentive in incentive_tiers:
+        if sales_amount >= tier_threshold:
+            return incentive
+    return 0
+
+
+def calculate_master_trainer_bonus(six_month_sales, settings=None):
+    """Calculate Master Trainer 진급 bonus based on 6-month average sales
+    Threshold is configurable (default: 9,000,000 average per month)
+    """
+    if settings is None:
+        settings = get_salary_settings()
+    threshold = settings.get('master_threshold', 9000000)
+    bonus = settings.get('master_bonus', 300000)
+    avg_sales = six_month_sales / 6
+    if avg_sales >= threshold:
+        return bonus
+    return 0
+
+
+def calculate_lesson_fee_rate(sales_amount, settings=None):
     """Calculate lesson fee percentage based on sales tier"""
-    for tier_threshold, rate in LESSON_FEE_TIERS:
+    if settings is None:
+        settings = get_salary_settings()
+    lesson_fee_tiers = settings.get('lesson_fee_tiers', DEFAULT_LESSON_FEE_TIERS)
+    for tier_threshold, rate in lesson_fee_tiers:
         if sales_amount >= tier_threshold:
             return rate
     return 10  # Default 10% for under 3M
 
 
-def calculate_lesson_fee_rate_other(sales_amount):
+def calculate_lesson_fee_rate_other(sales_amount, settings=None):
     """Calculate 근무외 lesson fee percentage based on sales"""
-    if sales_amount > 5000000:
-        return 40
-    return calculate_lesson_fee_rate(sales_amount)
+    if settings is None:
+        settings = get_salary_settings()
+    other_threshold = settings.get('other_threshold', 5000000)
+    other_rate = settings.get('other_rate', 40)
+    if sales_amount > other_threshold:
+        return other_rate
+    return calculate_lesson_fee_rate(sales_amount, settings)
 
 
 def calculate_member_sales_contribution(member):
@@ -1170,12 +1518,15 @@ def calculate_member_sales_contribution(member):
     return contract_amount
 
 
-def calculate_trainer_incentives_for_month(trainer_id, month_start, next_month, exclude_member_id=None):
+def calculate_trainer_incentives_for_month(trainer_id, month_start, next_month, exclude_member_id=None, settings=None):
     """
-    Calculate trainer's incentives (인센티브 + 영업지원인센티브 + Master Trainer bonus) for a specific month.
+    Calculate trainer's incentives (인센티브 + Master Trainer bonus) for a specific month.
     Optionally exclude a specific member from the calculation.
     Returns tuple: (total_incentives, sales_amount)
     """
+    if settings is None:
+        settings = get_salary_settings()
+
     # Get members created in the month
     members_response = supabase.table('members').select(
         'id, sessions, unit_price, channel'
@@ -1220,12 +1571,11 @@ def calculate_trainer_incentives_for_month(trainer_id, month_start, next_month, 
             continue
         six_month_sales += calculate_member_sales_contribution(m)
 
-    # Calculate incentives
-    incentive = calculate_incentive(sales)
-    sales_support = calculate_sales_support_incentive(sales)
-    master_bonus = calculate_master_trainer_bonus(six_month_sales)
+    # Calculate incentives using settings
+    incentive = calculate_incentive(sales, settings)
+    master_bonus = calculate_master_trainer_bonus(six_month_sales, settings)
 
-    total_incentives = incentive + sales_support + master_bonus
+    total_incentives = incentive + master_bonus
     return total_incentives, sales
 
 
@@ -1385,6 +1735,24 @@ def cancel_refund(member_id):
     return redirect(url_for('view_member', member_id=member_id))
 
 
+def get_trainer_dayoffs(trainer_ids, month_str):
+    """Get 휴무일 count for trainers for a specific month"""
+    if not trainer_ids:
+        return {}
+    try:
+        response = supabase.table('trainer_dayoffs').select('trainer_id, days').eq('month', month_str).in_('trainer_id', trainer_ids).execute()
+        return {d['trainer_id']: d['days'] for d in (response.data or [])}
+    except:
+        return {}
+
+
+def calculate_dayoff_deduction(days):
+    """Calculate 휴무 deduction: first day free, then 33,000원 per day"""
+    if days <= 1:
+        return 0
+    return (days - 1) * 33000
+
+
 @app.route('/salary')
 @login_required
 def salary():
@@ -1414,6 +1782,12 @@ def salary():
             six_month_start = six_month_start.replace(year=six_month_start.year - 1, month=12)
         else:
             six_month_start = six_month_start.replace(month=six_month_start.month - 1)
+
+    # Load salary settings from database (or use defaults)
+    salary_settings = get_salary_settings()
+
+    # Month string for 휴무 lookup
+    month_key = month_start.strftime('%Y-%m')
 
     # Get branches and trainers based on role
     branches_list = []
@@ -1454,9 +1828,8 @@ def salary():
             for m in six_month_members
             if m.get('refund_status') != 'refunded'
         )
-        incentive = calculate_incentive(sales)
-        sales_support = calculate_sales_support_incentive(sales)
-        master_bonus = calculate_master_trainer_bonus(six_month_sales)
+        incentive = calculate_incentive(sales, salary_settings)
+        master_bonus = calculate_master_trainer_bonus(six_month_sales, salary_settings)
 
         # Calculate lesson fees
         lesson_fee_base_main = 0
@@ -1468,12 +1841,17 @@ def salary():
             else:
                 lesson_fee_base_other += member_unit_price
 
-        lesson_fee_rate_main = calculate_lesson_fee_rate(sales)
-        lesson_fee_rate_other = calculate_lesson_fee_rate_other(sales)
+        lesson_fee_rate_main = calculate_lesson_fee_rate(sales, salary_settings)
+        lesson_fee_rate_other = calculate_lesson_fee_rate_other(sales, salary_settings)
         lesson_fee_main = int(lesson_fee_base_main * lesson_fee_rate_main / 100)
         lesson_fee_other = int(lesson_fee_base_other * lesson_fee_rate_other / 100)
 
-        total_salary = incentive + sales_support + master_bonus + lesson_fee_main + lesson_fee_other - int(refund_deductions)
+        # Get 휴무일 for trainer
+        trainer_dayoffs = get_trainer_dayoffs([user['id']], month_key)
+        dayoff_days = trainer_dayoffs.get(user['id'], 0)
+        dayoff_deduction = calculate_dayoff_deduction(dayoff_days)
+
+        total_salary = incentive + master_bonus + lesson_fee_main + lesson_fee_other - int(refund_deductions) - dayoff_deduction
 
         trainer_data.append({
             'id': user['id'],
@@ -1482,7 +1860,6 @@ def salary():
             'sales': sales,
             'six_month_sales': six_month_sales,
             'incentive': incentive,
-            'sales_support': sales_support,
             'master_bonus': master_bonus,
             'lesson_fee_base_main': lesson_fee_base_main,
             'lesson_fee_base_other': lesson_fee_base_other,
@@ -1491,6 +1868,8 @@ def salary():
             'lesson_fee_main': lesson_fee_main,
             'lesson_fee_other': lesson_fee_other,
             'refund_deduction': int(refund_deductions),
+            'dayoff_days': dayoff_days,
+            'dayoff_deduction': dayoff_deduction,
             'total_salary': total_salary
         })
         total_sales = sales
@@ -1594,27 +1973,33 @@ def salary():
             else:
                 trainer_lesson_fees[tid]['other'] += unit_price
 
+        # Get 휴무일 for all trainers
+        all_dayoffs = get_trainer_dayoffs(trainer_ids, month_key) if trainer_ids else {}
+
         # Build trainer data with sales and incentive
         for trainer in trainers_list:
             sales = trainer_sales.get(trainer['id'], 0)
             six_month_sales = trainer_six_month_sales.get(trainer['id'], 0)
-            incentive = calculate_incentive(sales)
-            sales_support = calculate_sales_support_incentive(sales)
-            master_bonus = calculate_master_trainer_bonus(six_month_sales)
+            incentive = calculate_incentive(sales, salary_settings)
+            master_bonus = calculate_master_trainer_bonus(six_month_sales, salary_settings)
 
             # Lesson fees
             lesson_data = trainer_lesson_fees.get(trainer['id'], {'main': 0, 'other': 0})
             lesson_fee_base_main = lesson_data['main']
             lesson_fee_base_other = lesson_data['other']
-            lesson_fee_rate_main = calculate_lesson_fee_rate(sales)
-            lesson_fee_rate_other = calculate_lesson_fee_rate_other(sales)
+            lesson_fee_rate_main = calculate_lesson_fee_rate(sales, salary_settings)
+            lesson_fee_rate_other = calculate_lesson_fee_rate_other(sales, salary_settings)
             lesson_fee_main = int(lesson_fee_base_main * lesson_fee_rate_main / 100)
             lesson_fee_other = int(lesson_fee_base_other * lesson_fee_rate_other / 100)
 
             # Refund deductions
             refund_deduction = int(trainer_refund_deductions.get(trainer['id'], 0))
 
-            trainer_total = incentive + sales_support + master_bonus + lesson_fee_main + lesson_fee_other - refund_deduction
+            # 휴무 deduction
+            dayoff_days = all_dayoffs.get(trainer['id'], 0)
+            dayoff_deduction = calculate_dayoff_deduction(dayoff_days)
+
+            trainer_total = incentive + master_bonus + lesson_fee_main + lesson_fee_other - refund_deduction - dayoff_deduction
             total_sales += sales
             total_incentive += trainer_total
 
@@ -1625,7 +2010,6 @@ def salary():
                 'sales': sales,
                 'six_month_sales': six_month_sales,
                 'incentive': incentive,
-                'sales_support': sales_support,
                 'master_bonus': master_bonus,
                 'lesson_fee_base_main': lesson_fee_base_main,
                 'lesson_fee_base_other': lesson_fee_base_other,
@@ -1634,6 +2018,8 @@ def salary():
                 'lesson_fee_main': lesson_fee_main,
                 'lesson_fee_other': lesson_fee_other,
                 'refund_deduction': refund_deduction,
+                'dayoff_days': dayoff_days,
+                'dayoff_deduction': dayoff_deduction,
                 'total_salary': trainer_total
             })
 
@@ -1659,7 +2045,107 @@ def salary():
                          selected_month=month_start.strftime('%Y-%m'),
                          total_sales=total_sales,
                          total_incentive=total_incentive,
-                         incentive_tiers=INCENTIVE_TIERS)
+                         salary_settings=salary_settings)
+
+
+@app.route('/salary/tiers/update', methods=['POST'])
+@role_required('main_admin')
+def update_salary_tiers():
+    """API endpoint to save salary tier settings - Super Admin only"""
+    user = session['user']
+
+    data = request.get_json()
+
+    try:
+        # Check if settings exist
+        existing = supabase.table('salary_settings').select('id').execute()
+
+        settings_data = {
+            'incentive_tiers': data.get('incentive_tiers', []),
+            'lesson_fee_tiers': data.get('lesson_fee_tiers', []),
+            'master_threshold': data.get('master_threshold', 9000000),
+            'master_bonus': data.get('master_bonus', 300000),
+            'other_threshold': data.get('other_threshold', 5000000),
+            'other_rate': data.get('other_rate', 40),
+            'updated_by': user['id']
+        }
+
+        if existing.data:
+            # Update existing settings
+            supabase.table('salary_settings').update(settings_data).eq(
+                'id', existing.data[0]['id']
+            ).execute()
+        else:
+            # Insert new settings
+            supabase.table('salary_settings').insert(settings_data).execute()
+
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/salary/dayoff/update', methods=['POST'])
+@login_required
+def update_trainer_dayoff():
+    """API endpoint to update trainer's 휴무일 count - Admin/Manager only"""
+    user = session['user']
+
+    # Only admin and branch_admin can update dayoffs
+    if user['role'] not in ['main_admin', 'branch_admin']:
+        return jsonify({'success': False, 'error': '권한이 없습니다.'}), 403
+
+    data = request.get_json()
+    trainer_id = data.get('trainer_id')
+    month = data.get('month')  # Format: YYYY-MM
+    days = data.get('days', 0)
+
+    if not trainer_id or not month:
+        return jsonify({'success': False, 'error': '필수 정보가 누락되었습니다.'}), 400
+
+    try:
+        days = int(days)
+        if days < 0:
+            days = 0
+    except:
+        days = 0
+
+    try:
+        # Check if branch_admin has permission for this trainer
+        if user['role'] == 'branch_admin':
+            trainer = supabase.table('users').select('branch_id').eq('id', trainer_id).execute()
+            if not trainer.data or trainer.data[0].get('branch_id') != user['branch_id']:
+                return jsonify({'success': False, 'error': '이 트레이너의 휴무를 수정할 권한이 없습니다.'}), 403
+
+        # Check if record exists
+        existing = supabase.table('trainer_dayoffs').select('id').eq('trainer_id', trainer_id).eq('month', month).execute()
+
+        if days == 0:
+            # Delete record if days is 0
+            if existing.data:
+                supabase.table('trainer_dayoffs').delete().eq('id', existing.data[0]['id']).execute()
+        elif existing.data:
+            # Update existing record
+            supabase.table('trainer_dayoffs').update({
+                'days': days,
+                'updated_by': user['id']
+            }).eq('id', existing.data[0]['id']).execute()
+        else:
+            # Insert new record
+            supabase.table('trainer_dayoffs').insert({
+                'trainer_id': trainer_id,
+                'month': month,
+                'days': days,
+                'updated_by': user['id']
+            }).execute()
+
+        # Calculate the new deduction
+        deduction = calculate_dayoff_deduction(days)
+
+        return jsonify({'success': True, 'days': days, 'deduction': deduction})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':
