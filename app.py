@@ -3079,9 +3079,31 @@ def delete_user(user_id):
             flash('총관리자는 삭제할 수 없습니다.', 'error')
             return redirect(request.referrer or url_for('dashboard'))
 
+        # Get all members assigned to this user
+        members_response = supabase.table('members').select('id').eq('trainer_id', user_id).execute()
+        member_ids = [m['id'] for m in members_response.data] if members_response.data else []
+
+        # Delete related records for these members
+        if member_ids:
+            # Delete schedules for these members
+            supabase.table('schedules').delete().in_('member_id', member_ids).execute()
+            # Delete OT assignments for these members
+            supabase.table('ot_assignments').delete().in_('member_id', member_ids).execute()
+            # Delete OT assignment history for these members
+            supabase.table('ot_assignment_history').delete().in_('member_id', member_ids).execute()
+            # Delete members
+            supabase.table('members').delete().in_('id', member_ids).execute()
+
+        # Also delete OT assignments where this user is the trainer
+        supabase.table('ot_assignments').delete().eq('trainer_id', user_id).execute()
+
         # Delete the user
         supabase.table('users').delete().eq('id', user_id).execute()
-        flash(f'{target_user["name"]}님이 삭제되었습니다.', 'success')
+
+        deleted_msg = f'{target_user["name"]}님이 삭제되었습니다.'
+        if member_ids:
+            deleted_msg += f' (회원 {len(member_ids)}명도 함께 삭제됨)'
+        flash(deleted_msg, 'success')
 
     except Exception as e:
         flash(f'사용자 삭제 중 오류가 발생했습니다: {str(e)}', 'error')
