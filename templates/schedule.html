@@ -98,6 +98,66 @@
 {% endif %}
 {% endif %}
 
+<!-- OT Assignments Panel (for trainers) -->
+{% if user.role == 'trainer' and ot_assignments %}
+<div class="card mb-3 border-info">
+    <div class="card-header bg-info text-white py-2 d-flex justify-content-between align-items-center">
+        <span><i class="bi bi-person-badge me-1"></i> 배정된 OT ({{ ot_assignments|length }}개)</span>
+        <button type="button" class="btn btn-light btn-sm" onclick="enterOtAddMode()">
+            <i class="bi bi-plus-circle"></i> OT 스케줄 추가
+        </button>
+    </div>
+    <div class="card-body py-2">
+        <div class="row g-2">
+            {% for ot in ot_assignments %}
+            <div class="col-md-4 col-6">
+                <div class="border rounded p-2 ot-assignment-card {% if ot.days_remaining is not none and ot.days_remaining < 2 %}border-danger{% elif ot.days_remaining is not none and ot.days_remaining < 5 %}border-warning{% else %}border-success{% endif %}"
+                     data-assignment-id="{{ ot.id }}"
+                     data-member-id="{{ ot.member.id }}"
+                     data-member-name="{{ ot.member.member_name }}"
+                     data-session-number="{{ ot.session_number }}"
+                     onclick="selectOtAssignment(this)">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <span class="fw-bold small">{{ ot.member.member_name }}</span>
+                        <span class="badge {% if ot.session_number == 1 %}bg-success{% elif ot.session_number == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %}">
+                            OT {{ ot.session_number }}차
+                        </span>
+                    </div>
+                    {% if ot.days_remaining is not none %}
+                    <div class="small {% if ot.days_remaining < 2 %}text-danger fw-bold{% elif ot.days_remaining < 5 %}text-warning{% else %}text-success{% endif %}">
+                        {% if ot.days_remaining < 0 %}{{ ot.days_remaining|abs }}일 초과{% elif ot.days_remaining == 0 %}오늘 만료!{% else %}{{ ot.days_remaining }}일 남음{% endif %}
+                        {% if ot.extended %}<span class="badge bg-secondary ms-1">연장</span>{% endif %}
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- OT Add Mode Panel (Hidden by default) -->
+{% if user.role == 'trainer' %}
+<div class="card mb-3 border-info" id="otAddModePanel" style="display: none;">
+    <div class="card-body py-3">
+        <div class="row align-items-center">
+            <div class="col-auto">
+                <span class="badge bg-info fs-6">OT 스케줄 추가 모드</span>
+            </div>
+            <div class="col-auto" id="otAddModeIndicator">
+                <span class="text-info fw-bold">
+                    <span id="selectedOtMemberName">OT 회원을 선택하세요</span>
+                </span>
+            </div>
+            <div class="col-auto ms-auto">
+                <button type="button" class="btn btn-secondary" onclick="exitMode()">완료</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <!-- Week Navigation & Filters - All in one row -->
 <div class="card mb-3 week-nav-card">
     <div class="card-body py-2">
@@ -788,11 +848,13 @@ function enterEditMode(restoring = false) {
 }
 
 function exitMode(silent = false) {
-    document.body.classList.remove('add-mode', 'delete-mode', 'edit-mode');
+    document.body.classList.remove('add-mode', 'delete-mode', 'edit-mode', 'ot-add-mode');
     document.getElementById('addModePanel').style.display = 'none';
     document.getElementById('deleteModePanel').style.display = 'none';
     const editPanel = document.getElementById('editModePanel');
     if (editPanel) editPanel.style.display = 'none';
+    const otAddPanel = document.getElementById('otAddModePanel');
+    if (otAddPanel) otAddPanel.style.display = 'none';
     document.getElementById('addModeBtn').classList.remove('active');
     document.getElementById('deleteModeBtn').classList.remove('active');
     const editBtn = document.getElementById('editModeBtn');
@@ -800,12 +862,119 @@ function exitMode(silent = false) {
     document.getElementById('selectedMember').value = '';
     document.getElementById('addModeIndicator').style.display = 'none';
 
+    // Reset OT selection
+    document.querySelectorAll('.ot-assignment-card').forEach(card => {
+        card.classList.remove('selected', 'border-3');
+    });
+    selectedOtAssignment = null;
+    const otNameSpan = document.getElementById('selectedOtMemberName');
+    if (otNameSpan) otNameSpan.textContent = 'OT 회원을 선택하세요';
+
     if (!silent) {
         // Clear sessionStorage when user clicks 완료
         sessionStorage.removeItem('scheduleMode');
         sessionStorage.removeItem('selectedMemberId');
         sessionStorage.removeItem('selectedMemberName');
+        sessionStorage.removeItem('selectedOtAssignmentId');
     }
+}
+
+// OT Scheduling
+let selectedOtAssignment = null;
+
+// Global flags to prevent multiple concurrent operations
+let isAddingSchedule = false;
+let isDeletingSchedule = false;
+
+function enterOtAddMode() {
+    exitMode(true);
+    document.body.classList.add('ot-add-mode');
+    const otAddPanel = document.getElementById('otAddModePanel');
+    if (otAddPanel) otAddPanel.style.display = 'block';
+    sessionStorage.setItem('scheduleMode', 'ot-add');
+}
+
+function selectOtAssignment(element) {
+    // Only work in OT add mode
+    if (!document.body.classList.contains('ot-add-mode')) {
+        enterOtAddMode();
+    }
+
+    // Remove previous selection
+    document.querySelectorAll('.ot-assignment-card').forEach(card => {
+        card.classList.remove('selected', 'border-3');
+    });
+
+    // Select this one
+    element.classList.add('selected', 'border-3');
+    selectedOtAssignment = {
+        assignmentId: element.dataset.assignmentId,
+        memberId: element.dataset.memberId,
+        memberName: element.dataset.memberName,
+        sessionNumber: element.dataset.sessionNumber
+    };
+
+    // Update indicator
+    const otNameSpan = document.getElementById('selectedOtMemberName');
+    if (otNameSpan) {
+        otNameSpan.textContent = `${selectedOtAssignment.memberName} (OT ${selectedOtAssignment.sessionNumber}차) - 시간대를 클릭하여 추가`;
+    }
+
+    sessionStorage.setItem('selectedOtAssignmentId', selectedOtAssignment.assignmentId);
+}
+
+function addOtScheduleToSlot(element) {
+    if (!document.body.classList.contains('ot-add-mode')) return;
+
+    // Prevent multiple concurrent additions globally
+    if (isAddingSchedule) {
+        return;
+    }
+
+    if (!selectedOtAssignment) {
+        alert('먼저 OT 회원을 선택해주세요.');
+        return;
+    }
+
+    const cell = element.closest('.schedule-cell');
+    const date = cell.dataset.date;
+    const time = cell.dataset.time;
+
+    // Prevent double-click on same cell
+    if (cell.classList.contains('loading')) return;
+
+    // Set global lock and cell loading state
+    isAddingSchedule = true;
+    cell.classList.add('loading');
+
+    fetch('{{ url_for("quick_add_schedule") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            member_id: selectedOtAssignment.memberId,
+            ot_assignment_id: selectedOtAssignment.assignmentId,
+            date: date,
+            time: time
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '스케줄 추가에 실패했습니다.');
+            cell.classList.remove('loading');
+            isAddingSchedule = false;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('스케줄 추가 중 오류가 발생했습니다.');
+        cell.classList.remove('loading');
+        isAddingSchedule = false;
+    });
 }
 
 function handleScheduleClick(element) {
@@ -835,7 +1004,18 @@ function handleScheduleClick(element) {
 }
 
 function addScheduleToSlot(element) {
+    // Handle OT add mode
+    if (document.body.classList.contains('ot-add-mode')) {
+        addOtScheduleToSlot(element);
+        return;
+    }
+
     if (!document.body.classList.contains('add-mode')) return;
+
+    // Prevent multiple concurrent additions globally
+    if (isAddingSchedule) {
+        return;
+    }
 
     const memberId = document.getElementById('selectedMember').value;
     if (!memberId) {
@@ -847,8 +1027,11 @@ function addScheduleToSlot(element) {
     const date = cell.dataset.date;
     const time = cell.dataset.time;
 
-    // Prevent double-click
+    // Prevent double-click on same cell
     if (cell.classList.contains('loading')) return;
+
+    // Set global lock and cell loading state
+    isAddingSchedule = true;
     cell.classList.add('loading');
 
     fetch('{{ url_for("quick_add_schedule") }}', {
@@ -870,17 +1053,24 @@ function addScheduleToSlot(element) {
         } else {
             alert(data.error || '스케줄 추가에 실패했습니다.');
             cell.classList.remove('loading');
+            isAddingSchedule = false;
         }
     })
     .catch(error => {
         console.error('Error:', error);
         alert('스케줄 추가 중 오류가 발생했습니다.');
         cell.classList.remove('loading');
+        isAddingSchedule = false;
     });
 }
 
 function deleteSchedule(scheduleId, scheduleDate) {
     if (!document.body.classList.contains('delete-mode')) return;
+
+    // Prevent multiple concurrent deletions
+    if (isDeletingSchedule) {
+        return;
+    }
 
     const cell = document.querySelector(`[data-schedule-id="${scheduleId}"]`);
     const status = cell ? cell.dataset.status : '';
@@ -898,6 +1088,8 @@ function deleteSchedule(scheduleId, scheduleDate) {
 
     if (!confirm('이 스케줄을 삭제하시겠습니까?')) return;
 
+    // Set global lock
+    isDeletingSchedule = true;
     if (cell) cell.classList.add('loading');
 
     fetch('{{ url_for("quick_delete_schedule") }}', {
@@ -917,12 +1109,14 @@ function deleteSchedule(scheduleId, scheduleDate) {
         } else {
             alert(data.error || '스케줄 삭제에 실패했습니다.');
             if (cell) cell.classList.remove('loading');
+            isDeletingSchedule = false;
         }
     })
     .catch(error => {
         console.error('Error:', error);
         alert('스케줄 삭제 중 오류가 발생했습니다.');
         if (cell) cell.classList.remove('loading');
+        isDeletingSchedule = false;
     });
 }
 
@@ -1055,6 +1249,7 @@ function clearModalSignature() {
 function submitCompleteSession() {
     const workType = document.querySelector('input[name="modal_work_type"]:checked');
     const signature = document.getElementById('modal_signature').value;
+    const sessionNotes = document.getElementById('modal_session_notes').value;
 
     if (!workType) {
         alert('근무 유형을 선택해주세요.');
@@ -1078,7 +1273,8 @@ function submitCompleteSession() {
         body: JSON.stringify({
             schedule_id: currentScheduleId,
             work_type: workType.value,
-            session_signature: signature
+            session_signature: signature,
+            session_notes: sessionNotes
         })
     })
     .then(response => response.json())
@@ -1272,6 +1468,12 @@ function submitEditSchedule() {
                         서명 지우기
                     </button>
                 </div>
+
+                <!-- Session Notes -->
+                <div class="mb-3">
+                    <label class="form-label"><strong>수업 일지</strong> <small class="text-muted">(선택사항)</small></label>
+                    <textarea class="form-control" id="modal_session_notes" rows="3" placeholder="수업 내용, 회원 상태, 특이사항 등을 기록하세요..."></textarea>
+                </div>
             </div>
             <div class="modal-footer d-flex justify-content-between">
                 <button type="button" class="btn btn-outline-danger" id="modalCancelBtn" onclick="submitCancelSession()">
@@ -1337,6 +1539,136 @@ function submitEditSchedule() {
         </div>
     </div>
 </div>
+{% endif %}
+
+<!-- OT Extension Popup (for trainers with near-deadline OTs) -->
+{% if user.role == 'trainer' and near_deadline_ots %}
+<div class="modal fade" id="otExtensionModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title">
+                    <i class="bi bi-exclamation-triangle me-2"></i>OT 기한 만료 임박
+                </h5>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">다음 OT 배정이 곧 만료됩니다. 연장하시겠습니까?</p>
+                <div id="nearDeadlineOtList">
+                    {% for ot in near_deadline_ots %}
+                    <div class="card mb-2 near-deadline-card" data-assignment-id="{{ ot.id }}">
+                        <div class="card-body py-2">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ ot.member.member_name }}</strong>
+                                    <span class="badge {% if ot.session_number == 1 %}bg-success{% elif ot.session_number == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %} ms-1">
+                                        {{ ot.session_number }}차
+                                    </span>
+                                </div>
+                                <div>
+                                    <span class="badge bg-danger">
+                                        {% if ot.days_remaining == 0 %}오늘 만료!{% else %}{{ ot.days_remaining }}일 남음{% endif %}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="mt-2 d-flex gap-2">
+                                <button type="button" class="btn btn-sm btn-success flex-grow-1"
+                                        onclick="extendOtAssignment('{{ ot.id }}', this)">
+                                    <i class="bi bi-calendar-plus"></i> 1주 연장
+                                </button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary"
+                                        onclick="skipExtension('{{ ot.id }}', this)">
+                                    연장 안함
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="alert alert-info py-2 mt-3 mb-0">
+                    <small>
+                        <i class="bi bi-info-circle me-1"></i>
+                        연장은 1회만 가능합니다. 연장하지 않으면 기한 만료 시 자동으로 지점장에게 반환됩니다.
+                    </small>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="closeExtensionModal">
+                    나중에 결정
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+// Show extension popup on page load if there are near-deadline OTs
+document.addEventListener('DOMContentLoaded', function() {
+    // Check if already shown this session
+    const shownThisSession = sessionStorage.getItem('otExtensionShown');
+    if (!shownThisSession) {
+        const modal = new bootstrap.Modal(document.getElementById('otExtensionModal'));
+        modal.show();
+        sessionStorage.setItem('otExtensionShown', 'true');
+    }
+});
+
+function extendOtAssignment(assignmentId, btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch(`/ot-assignments/${assignmentId}/extend`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            const card = btn.closest('.near-deadline-card');
+            card.innerHTML = `
+                <div class="card-body py-2 bg-success bg-opacity-10">
+                    <div class="text-success">
+                        <i class="bi bi-check-circle me-1"></i> ${data.message}
+                    </div>
+                </div>
+            `;
+            checkAllDecided();
+        } else {
+            alert(data.error || '연장에 실패했습니다.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-calendar-plus"></i> 1주 연장';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('연장 중 오류가 발생했습니다.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-calendar-plus"></i> 1주 연장';
+    });
+}
+
+function skipExtension(assignmentId, btn) {
+    const card = btn.closest('.near-deadline-card');
+    card.innerHTML = `
+        <div class="card-body py-2 bg-secondary bg-opacity-10">
+            <div class="text-muted">
+                <i class="bi bi-x-circle me-1"></i> 연장하지 않음 - 기한 만료 시 자동 반환됩니다.
+            </div>
+        </div>
+    `;
+    checkAllDecided();
+}
+
+function checkAllDecided() {
+    const remainingCards = document.querySelectorAll('.near-deadline-card button');
+    if (remainingCards.length === 0) {
+        setTimeout(() => {
+            bootstrap.Modal.getInstance(document.getElementById('otExtensionModal')).hide();
+            location.reload();
+        }, 1500);
+    }
+}
+</script>
 {% endif %}
 
 <style>

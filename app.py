@@ -7,6 +7,42 @@ import config
 # Korean timezone (UTC+9)
 KST = timezone(timedelta(hours=9))
 
+
+def parse_datetime(dt_string):
+    """
+    Parse ISO datetime string robustly, handling various formats from Supabase.
+    Handles cases where microseconds have variable digits (e.g., 5 digits instead of 6).
+    """
+    if not dt_string:
+        return None
+    # Replace Z with +00:00 for UTC
+    dt_string = dt_string.replace('Z', '+00:00')
+    # Try direct parsing first
+    try:
+        return datetime.fromisoformat(dt_string)
+    except ValueError:
+        # Handle microseconds with wrong number of digits
+        # Split at the decimal point if exists
+        if '.' in dt_string:
+            base, rest = dt_string.split('.', 1)
+            # Find where the timezone starts (+ or -)
+            tz_start = -1
+            for i, c in enumerate(rest):
+                if c in '+-':
+                    tz_start = i
+                    break
+            if tz_start > 0:
+                microseconds = rest[:tz_start]
+                tz_part = rest[tz_start:]
+                # Pad or truncate microseconds to 6 digits
+                microseconds = microseconds[:6].ljust(6, '0')
+                dt_string = f"{base}.{microseconds}{tz_part}"
+            else:
+                # No timezone, just fix microseconds
+                microseconds = rest[:6].ljust(6, '0')
+                dt_string = f"{base}.{microseconds}"
+        return datetime.fromisoformat(dt_string)
+
 app = Flask(__name__)
 app.secret_key = config.SECRET_KEY
 
@@ -165,6 +201,11 @@ def login():
             user = response.data[0]
             # Simple password check (in production, use proper hashing)
             if user['password_hash'] == password:
+                # Check if user is deactivated
+                if user.get('status') == '비활성화':
+                    flash('계정이 비활성화되었습니다. 관리자에게 문의하세요.', 'error')
+                    return render_template('login.html')
+
                 session['user'] = {
                     'id': user['id'],
                     'name': user['name'],
@@ -218,6 +259,10 @@ def dashboard():
         'trainer_count': 0,
         'branch_count': 0,
         'top_trainers': [],
+        'ot_unassigned': 0,
+        'ot_assigned': 0,
+        'ot_completed': 0,
+        'ot_returned': 0,
     }
 
     if user['role'] == 'trainer':
@@ -237,16 +282,16 @@ def dashboard():
         new_last_month = [m for m in all_members if prev_month_start.isoformat() <= m['created_at'][:10] < month_start.isoformat()]
         dashboard_data['new_members_last_month'] = len(new_last_month)
 
-        # Sales this month (excluding refunded, 50% for WI)
+        # Sales this month (50% for WI, refunded members included with proportional amount)
         dashboard_data['sales_this_month'] = sum(
             m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-            for m in new_this_month if m.get('refund_status') != 'refunded'
+            for m in new_this_month
         )
 
         # Sales last month
         dashboard_data['sales_last_month'] = sum(
             m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-            for m in new_last_month if m.get('refund_status') != 'refunded'
+            for m in new_last_month
         )
 
         # Today's schedules
@@ -283,14 +328,14 @@ def dashboard():
             new_last_month = [m for m in all_members if prev_month_start.isoformat() <= m['created_at'][:10] < month_start.isoformat()]
             dashboard_data['new_members_last_month'] = len(new_last_month)
 
-            # Sales this month
+            # Sales this month (refunded members included with proportional amount)
             dashboard_data['sales_this_month'] = sum(
                 m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-                for m in new_this_month if m.get('refund_status') != 'refunded'
+                for m in new_this_month
             )
             dashboard_data['sales_last_month'] = sum(
                 m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-                for m in new_last_month if m.get('refund_status') != 'refunded'
+                for m in new_last_month
             )
 
             # Sessions this month
@@ -300,10 +345,9 @@ def dashboard():
             # Top trainers by sales this month
             trainer_sales = {}
             for m in new_this_month:
-                if m.get('refund_status') != 'refunded':
-                    tid = m['trainer_id']
-                    amount = m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-                    trainer_sales[tid] = trainer_sales.get(tid, 0) + amount
+                tid = m['trainer_id']
+                amount = m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
+                trainer_sales[tid] = trainer_sales.get(tid, 0) + amount
 
             trainer_name_map = {t['id']: t['name'] for t in trainers}
             top_trainers = sorted(
@@ -314,6 +358,20 @@ def dashboard():
 
             # Recent members
             dashboard_data['recent_members'] = sorted(all_members, key=lambda x: x['created_at'], reverse=True)[:5]
+
+        # OT metrics for branch admin
+        ot_response = supabase.table('members').select('id, ot_status').eq('member_type', 'OT회원').eq('branch_id', user['branch_id']).execute()
+        if ot_response.data:
+            for ot in ot_response.data:
+                status = ot.get('ot_status', 'unassigned')
+                if status == 'unassigned':
+                    dashboard_data['ot_unassigned'] += 1
+                elif status == 'assigned':
+                    dashboard_data['ot_assigned'] += 1
+                elif status == 'completed':
+                    dashboard_data['ot_completed'] += 1
+                elif status == 'returned':
+                    dashboard_data['ot_returned'] += 1
 
     else:  # main_admin
         # Main admin dashboard
@@ -340,14 +398,14 @@ def dashboard():
             new_last_month = [m for m in all_members if prev_month_start.isoformat() <= m['created_at'][:10] < month_start.isoformat()]
             dashboard_data['new_members_last_month'] = len(new_last_month)
 
-            # Sales this month
+            # Sales this month (refunded members included with proportional amount)
             dashboard_data['sales_this_month'] = sum(
                 m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-                for m in new_this_month if m.get('refund_status') != 'refunded'
+                for m in new_this_month
             )
             dashboard_data['sales_last_month'] = sum(
                 m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-                for m in new_last_month if m.get('refund_status') != 'refunded'
+                for m in new_last_month
             )
 
             # Sessions this month
@@ -357,10 +415,9 @@ def dashboard():
             # Top trainers by sales
             trainer_sales = {}
             for m in new_this_month:
-                if m.get('refund_status') != 'refunded':
-                    tid = m['trainer_id']
-                    amount = m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-                    trainer_sales[tid] = trainer_sales.get(tid, 0) + amount
+                tid = m['trainer_id']
+                amount = m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
+                trainer_sales[tid] = trainer_sales.get(tid, 0) + amount
 
             trainer_name_map = {t['id']: t['name'] for t in trainers}
             top_trainers = sorted(
@@ -371,6 +428,20 @@ def dashboard():
 
             # Recent members
             dashboard_data['recent_members'] = sorted(all_members, key=lambda x: x['created_at'], reverse=True)[:5]
+
+        # OT metrics for main admin
+        ot_response = supabase.table('members').select('id, ot_status').eq('member_type', 'OT회원').execute()
+        if ot_response.data:
+            for ot in ot_response.data:
+                status = ot.get('ot_status', 'unassigned')
+                if status == 'unassigned':
+                    dashboard_data['ot_unassigned'] += 1
+                elif status == 'assigned':
+                    dashboard_data['ot_assigned'] += 1
+                elif status == 'completed':
+                    dashboard_data['ot_completed'] += 1
+                elif status == 'returned':
+                    dashboard_data['ot_returned'] += 1
 
     return render_template('dashboard.html', user=user, data=dashboard_data, today=today.isoformat(), current_month=month_start.strftime('%Y년 %m월'))
 
@@ -432,7 +503,40 @@ def members():
 
         # Get members with filters
         if filter_trainer_id:
+            # Get regular members assigned to this trainer
             response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').eq('trainer_id', filter_trainer_id).order('created_at', desc=True).execute()
+            regular_members = response.data if response.data else []
+
+            # Also get OT members assigned to this trainer via ot_assignments
+            ot_assignments_response = supabase.table('ot_assignments').select(
+                'member_id, status, session_number'
+            ).eq('trainer_id', filter_trainer_id).in_('status', ['assigned', 'scheduled', 'completed']).execute()
+
+            ot_member_ids = []
+            ot_session_counts = {}
+            ot_first_session_numbers = {}
+            if ot_assignments_response.data:
+                for ot in ot_assignments_response.data:
+                    mid = ot['member_id']
+                    if mid not in ot_member_ids:
+                        ot_member_ids.append(mid)
+                        ot_first_session_numbers[mid] = ot['session_number']
+                    ot_session_counts[mid] = ot_session_counts.get(mid, 0) + 1
+
+            ot_members = []
+            if ot_member_ids:
+                ot_response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').in_('id', ot_member_ids).execute()
+                if ot_response.data:
+                    trainer_name_resp = supabase.table('users').select('name').eq('id', filter_trainer_id).execute()
+                    trainer_display_name = trainer_name_resp.data[0]['name'] if trainer_name_resp.data else ''
+                    for m in ot_response.data:
+                        m['ot_session_number'] = ot_first_session_numbers.get(m['id'], 1)
+                        m['sessions'] = ot_session_counts.get(m['id'], 1)
+                        m['trainer'] = {'name': trainer_display_name}
+                    ot_members = ot_response.data
+
+            response = type('obj', (object,), {'data': regular_members + ot_members})()
+
             trainer_response = supabase.table('users').select('name').eq('id', filter_trainer_id).execute()
             if trainer_response.data:
                 filter_trainer_name = trainer_response.data[0]['name']
@@ -455,7 +559,40 @@ def members():
         trainer_ids = [t['id'] for t in trainers_list]
 
         if filter_trainer_id and filter_trainer_id in trainer_ids:
+            # Get regular members assigned to this trainer
             response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').eq('trainer_id', filter_trainer_id).order('created_at', desc=True).execute()
+            regular_members = response.data if response.data else []
+
+            # Also get OT members assigned to this trainer via ot_assignments
+            ot_assignments_response = supabase.table('ot_assignments').select(
+                'member_id, status, session_number'
+            ).eq('trainer_id', filter_trainer_id).in_('status', ['assigned', 'scheduled', 'completed']).execute()
+
+            ot_member_ids = []
+            ot_session_counts = {}
+            ot_first_session_numbers = {}
+            if ot_assignments_response.data:
+                for ot in ot_assignments_response.data:
+                    mid = ot['member_id']
+                    if mid not in ot_member_ids:
+                        ot_member_ids.append(mid)
+                        ot_first_session_numbers[mid] = ot['session_number']
+                    ot_session_counts[mid] = ot_session_counts.get(mid, 0) + 1
+
+            ot_members = []
+            if ot_member_ids:
+                ot_response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').in_('id', ot_member_ids).execute()
+                if ot_response.data:
+                    trainer_name_resp = supabase.table('users').select('name').eq('id', filter_trainer_id).execute()
+                    trainer_display_name = trainer_name_resp.data[0]['name'] if trainer_name_resp.data else ''
+                    for m in ot_response.data:
+                        m['ot_session_number'] = ot_first_session_numbers.get(m['id'], 1)
+                        m['sessions'] = ot_session_counts.get(m['id'], 1)
+                        m['trainer'] = {'name': trainer_display_name}
+                    ot_members = ot_response.data
+
+            response = type('obj', (object,), {'data': regular_members + ot_members})()
+
             trainer_response = supabase.table('users').select('name').eq('id', filter_trainer_id).execute()
             if trainer_response.data:
                 filter_trainer_name = trainer_response.data[0]['name']
@@ -464,12 +601,58 @@ def members():
             response = type('obj', (object,), {'data': []})()
 
     else:  # trainer
-        response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').eq('trainer_id', user['id']).order('created_at', desc=True).execute()
+        # Get regular members assigned to trainer
+        response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').eq('trainer_id', user['id']).neq('member_type', 'OT회원').order('created_at', desc=True).execute()
+        regular_members = response.data if response.data else []
+
+        # Get OT members assigned to this trainer via ot_assignments
+        # Include 'completed' status so trainers can still see their completed OT sessions
+        ot_assignments_response = supabase.table('ot_assignments').select(
+            'member_id, status, session_number'
+        ).eq('trainer_id', user['id']).in_('status', ['assigned', 'scheduled', 'completed']).execute()
+
+        ot_member_ids = []
+        ot_session_counts = {}  # {member_id: count of allocated sessions to this trainer}
+        ot_first_session_numbers = {}  # {member_id: first session_number for display}
+        if ot_assignments_response.data:
+            for ot in ot_assignments_response.data:
+                mid = ot['member_id']
+                if mid not in ot_member_ids:
+                    ot_member_ids.append(mid)
+                    ot_first_session_numbers[mid] = ot['session_number']
+                # Count total sessions allocated to this trainer
+                ot_session_counts[mid] = ot_session_counts.get(mid, 0) + 1
+
+        ot_members = []
+        if ot_member_ids:
+            ot_response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').in_('id', ot_member_ids).execute()
+            if ot_response.data:
+                for m in ot_response.data:
+                    m['ot_session_number'] = ot_first_session_numbers.get(m['id'], 1)
+                    # Override sessions with count allocated to this trainer (not total OT sessions)
+                    m['sessions'] = ot_session_counts.get(m['id'], 1)
+                    # Set trainer name for display (assigned trainer, not original)
+                    m['trainer'] = {'name': session['user']['name']}
+                ot_members = ot_response.data
+
+        # Combine regular and OT members
+        response = type('obj', (object,), {'data': regular_members + ot_members})()
 
     members_list = response.data if response.data else []
 
+    # For admins, sort to show regular members first, OT members at bottom
+    if user['role'] in ['main_admin', 'branch_admin']:
+        regular_members = [m for m in members_list if m.get('member_type') != 'OT회원']
+        ot_members = [m for m in members_list if m.get('member_type') == 'OT회원']
+        members_list = regular_members + ot_members
+
     # Get all member IDs
     member_ids = [m['id'] for m in members_list]
+
+    # For trainers, track which members are OT members (need to filter their schedules by trainer_id)
+    ot_member_ids_set = set()
+    if user['role'] == 'trainer':
+        ot_member_ids_set = set([m['id'] for m in members_list if m.get('member_type') == 'OT회원'])
 
     # Fetch all schedules for these members in the selected month
     if member_ids:
@@ -477,22 +660,33 @@ def members():
         schedules = schedules_response.data if schedules_response.data else []
 
         # Also get total completed sessions for each member (all time)
-        all_schedules_response = supabase.table('schedules').select('member_id, status').in_('member_id', member_ids).eq('status', '수업 완료').execute()
+        # Include trainer_id so we can filter for trainers viewing OT members
+        all_schedules_response = supabase.table('schedules').select('member_id, trainer_id, status').in_('member_id', member_ids).eq('status', '수업 완료').execute()
         all_completed = all_schedules_response.data if all_schedules_response.data else []
     else:
         schedules = []
         all_completed = []
 
     # Count completed sessions per member
+    # For trainers viewing OT members, only count their own completed sessions
     completed_counts = {}
     for s in all_completed:
         mid = s['member_id']
+        # For trainers viewing OT members, only count their own completed sessions
+        if user['role'] == 'trainer' and mid in ot_member_ids_set:
+            if s.get('trainer_id') != user['id']:
+                continue
         completed_counts[mid] = completed_counts.get(mid, 0) + 1
 
     # Organize schedules by member and date (list of schedules per date)
+    # For trainers viewing OT members, only include their own schedules
     schedule_map = {}  # {member_id: {date: [schedules]}}
     for s in schedules:
         mid = s['member_id']
+        # For trainers viewing OT members, only include their own schedules
+        if user['role'] == 'trainer' and mid in ot_member_ids_set:
+            if s.get('trainer_id') != user['id']:
+                continue
         date = s['schedule_date']
         if mid not in schedule_map:
             schedule_map[mid] = {}
@@ -547,6 +741,13 @@ def add_member():
         unit_price = request.form.get('unit_price')
         channel = request.form.get('channel')
         signature = request.form.get('signature')
+        member_type = request.form.get('member_type', '일반회원')
+
+        # Optional fields
+        age = request.form.get('age')
+        gender = request.form.get('gender')
+        occupation = request.form.get('occupation')
+        special_notes = request.form.get('special_notes')
 
         # Determine trainer_id
         if user['role'] == 'trainer':
@@ -554,10 +755,21 @@ def add_member():
         else:
             trainer_id = request.form.get('trainer_id')
 
-        # Validate required fields
-        if not all([member_name, phone, payment_method, sessions, unit_price, channel, trainer_id]):
-            flash('모든 필수 항목을 입력해주세요.', 'error')
-            return render_template('add_member.html', user=user, trainers=trainers)
+        # Validate required fields (payment fields optional for OT members)
+        if member_type == 'OT회원':
+            # OT members: only need basic info (no trainer required - goes to pool)
+            if not all([member_name, phone, channel]):
+                flash('모든 필수 항목을 입력해주세요.', 'error')
+                return render_template('add_member.html', user=user, trainers=trainers)
+            # OT members need 횟수 (sessions)
+            sessions = sessions or '1'
+            unit_price = '0'
+            payment_method = '무료'
+        else:
+            # Regular members: all payment fields required
+            if not all([member_name, phone, payment_method, sessions, unit_price, channel, trainer_id]):
+                flash('모든 필수 항목을 입력해주세요.', 'error')
+                return render_template('add_member.html', user=user, trainers=trainers)
 
         # Insert member into database
         try:
@@ -569,13 +781,51 @@ def add_member():
                 'unit_price': int(unit_price),
                 'channel': channel,
                 'signature': signature,
-                'trainer_id': trainer_id,
-                'created_by': user['id']
+                'created_by': user['id'],
+                'member_type': member_type
             }
 
+            # For OT members: no trainer assignment, goes to branch admin pool
+            if member_type == 'OT회원':
+                member_data['ot_status'] = 'unassigned'
+                member_data['ot_remaining_sessions'] = int(sessions)  # Track unassigned sessions
+                # Get branch_id from current user for filtering
+                if user['role'] == 'trainer':
+                    member_data['branch_id'] = user.get('branch_id')
+                elif user['role'] == 'branch_admin':
+                    member_data['branch_id'] = user.get('branch_id')
+                # trainer_id stays NULL for OT members
+            else:
+                member_data['trainer_id'] = trainer_id
+
+            # Add optional fields if provided
+            if age:
+                member_data['age'] = int(age)
+            if gender:
+                member_data['gender'] = gender
+            if occupation:
+                member_data['occupation'] = occupation
+            if special_notes:
+                member_data['special_notes'] = special_notes
+
+            # Handle InBody photos
+            inbody_photos_json = request.form.get('inbody_photos')
+            if inbody_photos_json:
+                try:
+                    import json
+                    inbody_photos = json.loads(inbody_photos_json)
+                    if inbody_photos:
+                        member_data['inbody_photos'] = inbody_photos
+                except:
+                    pass
+
             supabase.table('members').insert(member_data).execute()
-            flash('회원이 성공적으로 등록되었습니다.', 'success')
-            return redirect(url_for('members'))
+            if member_type == 'OT회원':
+                flash('OT 회원이 등록되었습니다. 지점장이 트레이너에게 배정합니다.', 'success')
+                return redirect(url_for('ot_members'))
+            else:
+                flash('회원이 성공적으로 등록되었습니다.', 'success')
+                return redirect(url_for('members'))
         except Exception as e:
             flash(f'회원 등록 중 오류가 발생했습니다: {str(e)}', 'error')
 
@@ -607,6 +857,185 @@ def view_member(member_id):
             return redirect(url_for('members'))
 
     return render_template('view_member.html', user=user, member=member)
+
+
+# API endpoint to get member details for modal
+@app.route('/api/member/<member_id>')
+@login_required
+def api_get_member(member_id):
+    user = session['user']
+
+    response = supabase.table('members').select('*, trainer:users!members_trainer_id_fkey(name)').eq('id', member_id).execute()
+
+    if not response.data:
+        return jsonify({'success': False, 'error': '회원을 찾을 수 없습니다.'})
+
+    member = response.data[0]
+
+    # Check access permissions
+    if user['role'] == 'trainer':
+        # Check if trainer owns this member directly OR has an OT assignment
+        is_direct_member = member['trainer_id'] == user['id']
+        is_ot_assigned = False
+        if not is_direct_member and member.get('member_type') == 'OT회원':
+            ot_check = supabase.table('ot_assignments').select('id').eq(
+                'member_id', member_id
+            ).eq('trainer_id', user['id']).in_('status', ['assigned', 'scheduled', 'completed']).execute()
+            is_ot_assigned = bool(ot_check.data)
+        if not is_direct_member and not is_ot_assigned:
+            return jsonify({'success': False, 'error': '접근 권한이 없습니다.'})
+
+    if user['role'] == 'branch_admin':
+        # For OT members, check if they belong to this branch
+        if member.get('member_type') == 'OT회원':
+            if member.get('branch_id') != user['branch_id']:
+                return jsonify({'success': False, 'error': '접근 권한이 없습니다.'})
+        elif member['trainer_id']:
+            trainer = supabase.table('users').select('branch_id').eq('id', member['trainer_id']).execute()
+            if trainer.data and trainer.data[0]['branch_id'] != user['branch_id']:
+                return jsonify({'success': False, 'error': '접근 권한이 없습니다.'})
+
+    # Get OT session number if OT member
+    ot_session_number = None
+    if member.get('member_type') == 'OT회원':
+        ot_session_number = get_ot_session_number(member_id)
+
+    # Calculate completed sessions from schedules
+    completed_resp = supabase.table('schedules').select('id', count='exact').eq('member_id', member_id).eq('status', '수업 완료').execute()
+    completed_sessions = completed_resp.count if completed_resp.count else 0
+
+    # Build response data
+    member_data = {
+        'id': member['id'],
+        'member_name': member['member_name'],
+        'phone': member['phone'],
+        'payment_method': member['payment_method'],
+        'sessions': member['sessions'],
+        'unit_price': member['unit_price'],
+        'channel': member['channel'],
+        'signature': member.get('signature'),
+        'created_at': member.get('created_at'),
+        'refund_status': member.get('refund_status'),
+        'refund_amount': member.get('refund_amount'),
+        'transfer_status': member.get('transfer_status'),
+        'completed_sessions': completed_sessions,
+        'trainer_name': member['trainer']['name'] if member.get('trainer') else None,
+        # New fields
+        'member_type': member.get('member_type', '일반회원'),
+        'age': member.get('age'),
+        'gender': member.get('gender'),
+        'occupation': member.get('occupation'),
+        'special_notes': member.get('special_notes'),
+        'ot_status': member.get('ot_status'),
+        'ot_deadline': member.get('ot_deadline'),
+        'ot_extended': member.get('ot_extended'),
+        'ot_session_number': ot_session_number,
+        'inbody_photos': member.get('inbody_photos', []),
+    }
+
+    return jsonify({'success': True, 'member': member_data})
+
+
+@app.route('/api/member/<member_id>/inbody', methods=['POST'])
+@login_required
+def api_add_inbody_photo(member_id):
+    """Add an InBody photo to a member."""
+    user = session['user']
+    data = request.get_json()
+    photo_data = data.get('photo')
+
+    if not photo_data:
+        return jsonify({'success': False, 'error': '사진 데이터가 없습니다.'})
+
+    try:
+        # Get current member data
+        response = supabase.table('members').select('inbody_photos, trainer_id').eq('id', member_id).execute()
+        if not response.data:
+            return jsonify({'success': False, 'error': '회원을 찾을 수 없습니다.'})
+
+        member = response.data[0]
+
+        # Check permissions (trainer can only update their own members)
+        if user['role'] == 'trainer' and member['trainer_id'] != user['id']:
+            return jsonify({'success': False, 'error': '접근 권한이 없습니다.'})
+
+        # Get existing photos or empty list
+        photos = member.get('inbody_photos') or []
+        photos.append(photo_data)
+
+        # Update member with new photos
+        supabase.table('members').update({'inbody_photos': photos}).eq('id', member_id).execute()
+
+        return jsonify({'success': True, 'photos': photos})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/member/<member_id>/inbody/<int:photo_index>', methods=['DELETE'])
+@login_required
+def api_delete_inbody_photo(member_id, photo_index):
+    """Delete an InBody photo from a member."""
+    user = session['user']
+
+    try:
+        # Get current member data
+        response = supabase.table('members').select('inbody_photos, trainer_id').eq('id', member_id).execute()
+        if not response.data:
+            return jsonify({'success': False, 'error': '회원을 찾을 수 없습니다.'})
+
+        member = response.data[0]
+
+        # Check permissions
+        if user['role'] == 'trainer' and member['trainer_id'] != user['id']:
+            return jsonify({'success': False, 'error': '접근 권한이 없습니다.'})
+
+        # Get existing photos
+        photos = member.get('inbody_photos') or []
+
+        if photo_index < 0 or photo_index >= len(photos):
+            return jsonify({'success': False, 'error': '사진을 찾을 수 없습니다.'})
+
+        # Remove photo at index
+        photos.pop(photo_index)
+
+        # Update member with remaining photos
+        supabase.table('members').update({'inbody_photos': photos}).eq('id', member_id).execute()
+
+        return jsonify({'success': True, 'photos': photos})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@app.route('/api/schedule/<schedule_id>/notes', methods=['POST'])
+@login_required
+def api_update_session_notes(schedule_id):
+    """Update session notes for a schedule entry."""
+    user = session['user']
+    data = request.get_json()
+    session_notes = data.get('session_notes', '')
+
+    # Get the schedule entry
+    response = supabase.table('schedules').select('*, member:members(trainer_id)').eq('id', schedule_id).execute()
+
+    if not response.data:
+        return jsonify({'success': False, 'error': '세션을 찾을 수 없습니다.'})
+
+    schedule = response.data[0]
+
+    # Check access permissions - trainer can only edit their own members' sessions
+    if user['role'] == 'trainer':
+        if schedule['member'] and schedule['member']['trainer_id'] != user['id']:
+            return jsonify({'success': False, 'error': '접근 권한이 없습니다.'})
+
+    # Update session notes
+    try:
+        supabase.table('schedules').update({
+            'session_notes': session_notes
+        }).eq('id', schedule_id).execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 
 # Admin routes for managing trainers (트레이너 관리)
@@ -909,20 +1338,65 @@ def schedule():
         })
 
     # Get members for quick-add feature (only for selected trainer)
+    # Filter: not refunded, not transferred, and has remaining sessions
     members_list = []
     if user['role'] == 'trainer':
-        members_response = supabase.table('members').select('id, member_name, phone, trainer_id, created_at').eq('trainer_id', user['id']).order('created_at').execute()
-        members_list = members_response.data if members_response.data else []
+        members_response = supabase.table('members').select(
+            'id, member_name, phone, sessions, trainer_id, created_at, refund_status, transfer_status'
+        ).eq('trainer_id', user['id']).order('created_at').execute()
+        raw_members = members_response.data if members_response.data else []
     elif selected_trainer_id:
         # For admins, only load members of the selected trainer
-        members_response = supabase.table('members').select('id, member_name, phone, trainer_id, created_at').eq('trainer_id', selected_trainer_id).order('created_at').execute()
-        members_list = members_response.data if members_response.data else []
+        members_response = supabase.table('members').select(
+            'id, member_name, phone, sessions, trainer_id, created_at, refund_status, transfer_status'
+        ).eq('trainer_id', selected_trainer_id).order('created_at').execute()
+        raw_members = members_response.data if members_response.data else []
+    else:
+        raw_members = []
+
+    # Filter out refunded, transferred, OT members, and those with no remaining sessions
+    for member in raw_members:
+        # Skip OT members (they use separate OT scheduling flow)
+        if member.get('member_type') == 'OT회원':
+            continue
+        # Skip refunded members
+        if member.get('refund_status') == 'refunded':
+            continue
+        # Skip transferred members
+        if member.get('transfer_status') == 'transferred':
+            continue
+        # Check remaining sessions
+        completed_resp = supabase.table('schedules').select('id', count='exact').eq('member_id', member['id']).eq('status', '수업 완료').execute()
+        completed_sessions = completed_resp.count if completed_resp.count else 0
+        remaining = member['sessions'] - completed_sessions
+        if remaining > 0:
+            member['remaining_sessions'] = remaining
+            members_list.append(member)
 
     # Deduplicate members with same name+phone (show only once per person)
     members_list = deduplicate_members_for_dropdown(members_list)
 
     # Add display_name for duplicate name detection
     add_display_names_to_members(members_list)
+
+    # Get OT assignments for trainer (show in schedule page)
+    ot_assignments_list = []
+    near_deadline_ots = []  # OTs that need extension popup (1-2 days remaining, not yet extended)
+    if user['role'] == 'trainer':
+        ot_response = supabase.table('ot_assignments').select(
+            '*, member:members!ot_assignments_member_id_fkey(id, member_name, phone, sessions)'
+        ).eq('trainer_id', user['id']).eq('status', 'assigned').order('deadline').execute()
+        if ot_response.data:
+            for ot in ot_response.data:
+                if ot.get('deadline'):
+                    deadline = parse_datetime(ot['deadline'])
+                    ot['days_remaining'] = (deadline.date() - datetime.now(KST).date()).days
+                    # Check if near deadline (0-2 days) and not extended
+                    if 0 <= ot['days_remaining'] <= 2 and not ot.get('extended'):
+                        near_deadline_ots.append(ot)
+                else:
+                    ot['days_remaining'] = None
+            ot_assignments_list = ot_response.data
 
     return render_template('schedule.html',
                          user=user,
@@ -935,7 +1409,9 @@ def schedule():
                          branches=branches_list,
                          selected_trainer_id=selected_trainer_id,
                          filter_branch_id=filter_branch_id,
-                         members=members_list)
+                         members=members_list,
+                         ot_assignments=ot_assignments_list,
+                         near_deadline_ots=near_deadline_ots)
 
 
 @app.route('/schedule/add', methods=['GET', 'POST'])
@@ -1156,6 +1632,7 @@ def complete_session_ajax():
     schedule_id = data.get('schedule_id')
     work_type = data.get('work_type')
     session_signature = data.get('session_signature')
+    session_notes = data.get('session_notes', '')
 
     if not schedule_id:
         return jsonify({'success': False, 'error': '스케줄 ID가 필요합니다.'}), 400
@@ -1187,8 +1664,34 @@ def complete_session_ajax():
             'status': '수업 완료',
             'work_type': work_type,
             'session_signature': session_signature,
+            'session_notes': session_notes,
             'completed_at': datetime.now().isoformat()
         }).eq('id', schedule_id).execute()
+
+        # If this is an OT schedule, update the assignment status to 'completed'
+        ot_assignment_id = schedule_item.get('ot_assignment_id')
+        if ot_assignment_id:
+            try:
+                supabase.table('ot_assignments').update({
+                    'status': 'completed',
+                    'completed_at': datetime.now().isoformat()
+                }).eq('id', ot_assignment_id).execute()
+
+                # Log the completion
+                supabase.table('ot_assignment_history').insert({
+                    'member_id': schedule_item.get('member_id'),
+                    'trainer_id': schedule_item.get('trainer_id'),
+                    'action': 'completed',
+                    'action_by': user['id'],
+                    'notes': f'수업 완료: {schedule_item.get("schedule_date")}'
+                }).execute()
+            except Exception as e:
+                print(f"Error updating OT assignment to completed: {e}")
+
+        # Check if OT member has completed all sessions
+        member_id = schedule_item.get('member_id')
+        if member_id:
+            check_ot_session_completion(member_id)
 
         return jsonify({'success': True})
     except Exception as e:
@@ -1285,6 +1788,7 @@ def quick_add_schedule():
     member_id = data.get('member_id')
     schedule_date = data.get('date')
     start_time = data.get('time')
+    ot_assignment_id = data.get('ot_assignment_id')  # For OT schedules
 
     if not all([member_id, schedule_date, start_time]):
         return jsonify({'success': False, 'error': '필수 정보가 누락되었습니다.'}), 400
@@ -1302,31 +1806,69 @@ def quick_add_schedule():
 
     # Determine trainer_id
     if user['role'] == 'trainer':
-        # Trainer can only add their own members
-        if member['trainer_id'] != user['id']:
+        # Trainer can only add their own members (or OT members assigned to them)
+        is_own_member = member['trainer_id'] == user['id']
+        is_ot_assigned = False
+
+        # Check if this is an OT member assigned to this trainer
+        if not is_own_member and ot_assignment_id:
+            ot_check = supabase.table('ot_assignments').select('id').eq(
+                'id', ot_assignment_id
+            ).eq('trainer_id', user['id']).eq('member_id', member_id).execute()
+            is_ot_assigned = bool(ot_check.data)
+
+        if not is_own_member and not is_ot_assigned:
             return jsonify({'success': False, 'error': '본인의 회원만 스케줄에 추가할 수 있습니다.'}), 403
         trainer_id = user['id']
     else:
-        # Admin uses the member's assigned trainer
+        # Admin uses the member's assigned trainer (or the trainer from OT assignment)
         trainer_id = member['trainer_id']
+        if not trainer_id and ot_assignment_id:
+            ot_assignment = supabase.table('ot_assignments').select('trainer_id').eq('id', ot_assignment_id).execute()
+            if ot_assignment.data:
+                trainer_id = ot_assignment.data[0]['trainer_id']
 
-    # Check remaining sessions for this person (same name + phone)
-    session_info = get_remaining_sessions_for_person(
-        member['member_name'],
-        member['phone'],
-        trainer_id
-    )
-
-    if session_info['total_remaining'] <= 0:
-        return jsonify({
-            'success': False,
-            'error': f"'{member['member_name']}' 회원의 잔여 세션이 없습니다. 새로운 회원 등록을 먼저 진행해주세요."
-        }), 400
-
-    # Use the oldest entry with available sessions
+    # For OT assignments, check the assignment status instead of regular session count
     target_member_id = member_id
-    if session_info['available_entry']:
-        target_member_id = session_info['available_entry']['id']
+    if ot_assignment_id:
+        # Check if this OT assignment is still valid for scheduling
+        ot_assignment = supabase.table('ot_assignments').select('id, status').eq('id', ot_assignment_id).execute()
+        if not ot_assignment.data:
+            return jsonify({'success': False, 'error': 'OT 배정을 찾을 수 없습니다.'}), 400
+
+        ot_status = ot_assignment.data[0]['status']
+        if ot_status not in ['assigned', 'scheduled']:
+            return jsonify({
+                'success': False,
+                'error': f"이 OT 배정은 더 이상 스케줄을 추가할 수 없습니다. (상태: {ot_status})"
+            }), 400
+
+        # Check if this assignment already has a scheduled session
+        existing_schedule = supabase.table('schedules').select('id').eq(
+            'ot_assignment_id', ot_assignment_id
+        ).in_('status', ['수업 계획', '수업 완료']).execute()
+        if existing_schedule.data:
+            return jsonify({
+                'success': False,
+                'error': '이 OT 배정에 대한 스케줄이 이미 존재합니다.'
+            }), 400
+    else:
+        # Regular member - check remaining sessions for this person (same name + phone)
+        session_info = get_remaining_sessions_for_person(
+            member['member_name'],
+            member['phone'],
+            trainer_id
+        )
+
+        if session_info['total_remaining'] <= 0:
+            return jsonify({
+                'success': False,
+                'error': f"'{member['member_name']}' 회원의 잔여 세션이 없습니다. 새로운 회원 등록을 먼저 진행해주세요."
+            }), 400
+
+        # Use the oldest entry with available sessions
+        if session_info['available_entry']:
+            target_member_id = session_info['available_entry']['id']
 
     try:
         schedule_data = {
@@ -1338,9 +1880,31 @@ def quick_add_schedule():
             'status': '수업 계획'
         }
 
+        # Add ot_assignment_id if provided
+        if ot_assignment_id:
+            schedule_data['ot_assignment_id'] = ot_assignment_id
+
         result = supabase.table('schedules').insert(schedule_data).execute()
 
         if result.data:
+            # If this is an OT schedule, update the assignment status to 'scheduled'
+            if ot_assignment_id:
+                try:
+                    supabase.table('ot_assignments').update({
+                        'status': 'scheduled'
+                    }).eq('id', ot_assignment_id).execute()
+
+                    # Log the action
+                    supabase.table('ot_assignment_history').insert({
+                        'member_id': member_id,
+                        'trainer_id': trainer_id,
+                        'action': 'scheduled',
+                        'action_by': user['id'],
+                        'notes': f'스케줄 등록: {schedule_date} {start_time}'
+                    }).execute()
+                except Exception as e:
+                    print(f"Error updating OT assignment status: {e}")
+
             return jsonify({
                 'success': True,
                 'schedule_id': result.data[0]['id'],
@@ -1464,14 +2028,32 @@ def get_salary_settings():
 
 
 def calculate_incentive(sales_amount, settings=None):
-    """Calculate incentive based on sales tier"""
-    if settings is None:
-        settings = get_salary_settings()
-    incentive_tiers = settings.get('incentive_tiers', DEFAULT_INCENTIVE_TIERS)
-    for tier_threshold, incentive in incentive_tiers:
-        if sales_amount >= tier_threshold:
-            return incentive
-    return 0
+    """Calculate 트레이너 인센티브 based on sales amount (매출 기준)
+    - 450만원 미만: 0
+    - 450만원 이상: 225,000원 고정
+    - 650만원 이상: 520,000원 고정
+    - 800만원 이상: 880,000원 고정
+    - 1000만원 이상: 1,400,000원 고정
+    - 1200만원 이상: 17% (매출의 %)
+    - 1500만원 이상: 17% + 50만원 고정
+    - 2000만원 이상: 17% + 100만원 고정
+    """
+    if sales_amount >= 20000000:  # 2000만원 이상
+        return int(sales_amount * 0.17) + 1000000
+    elif sales_amount >= 15000000:  # 1500만원 이상
+        return int(sales_amount * 0.17) + 500000
+    elif sales_amount >= 12000000:  # 1200만원 이상
+        return int(sales_amount * 0.17)
+    elif sales_amount >= 10000000:  # 1000만원 이상
+        return 1400000
+    elif sales_amount >= 8000000:  # 800만원 이상
+        return 880000
+    elif sales_amount >= 6500000:  # 650만원 이상
+        return 520000
+    elif sales_amount >= 4500000:  # 450만원 이상
+        return 225000
+    else:  # 450만원 미만
+        return 0
 
 
 def calculate_master_trainer_bonus(six_month_sales, settings=None):
@@ -1489,14 +2071,29 @@ def calculate_master_trainer_bonus(six_month_sales, settings=None):
 
 
 def calculate_lesson_fee_rate(sales_amount, settings=None):
-    """Calculate lesson fee percentage based on sales tier"""
-    if settings is None:
-        settings = get_salary_settings()
-    lesson_fee_tiers = settings.get('lesson_fee_tiers', DEFAULT_LESSON_FEE_TIERS)
-    for tier_threshold, rate in lesson_fee_tiers:
-        if sales_amount >= tier_threshold:
-            return rate
-    return 10  # Default 10% for under 3M
+    """Calculate 수업료 (근무내) percentage based on sales tier
+    - 300만원 미만: 10%
+    - 300만원 이상: 30%
+    - 450만원 이상: 31%
+    - 650만원 이상: 32%
+    - 800만원 이상: 33%
+    - 1000만원 이상: 34%
+    - 1200만원 이상: 35%
+    """
+    if sales_amount >= 12000000:  # 1200만원 이상
+        return 35
+    elif sales_amount >= 10000000:  # 1000만원 이상
+        return 34
+    elif sales_amount >= 8000000:  # 800만원 이상
+        return 33
+    elif sales_amount >= 6500000:  # 650만원 이상
+        return 32
+    elif sales_amount >= 4500000:  # 450만원 이상
+        return 31
+    elif sales_amount >= 3000000:  # 300만원 이상
+        return 30
+    else:  # 300만원 미만
+        return 10
 
 
 def calculate_lesson_fee_rate_other(sales_amount, settings=None):
@@ -1508,6 +2105,29 @@ def calculate_lesson_fee_rate_other(sales_amount, settings=None):
     if sales_amount > other_threshold:
         return other_rate
     return calculate_lesson_fee_rate(sales_amount, settings)
+
+
+def calculate_class_incentive(class_count, sales_amount):
+    """Calculate 수업당 인센 based on class count
+    - 30개 이상: 400,000원
+    - 50개 이상: 600,000원
+    - 70개 이상: 800,000원
+    - 100개 이상: 1,000,000원
+    * 매출 300만원 이하 일시 수업 갯수 인센 적용 안됨
+    """
+    # Must have sales > 3,000,000 to receive class incentive
+    if sales_amount <= 3000000:
+        return 0
+
+    if class_count >= 100:
+        return 1000000
+    elif class_count >= 70:
+        return 800000
+    elif class_count >= 50:
+        return 600000
+    elif class_count >= 30:
+        return 400000
+    return 0
 
 
 def calculate_member_sales_contribution(member):
@@ -1529,7 +2149,7 @@ def calculate_trainer_incentives_for_month(trainer_id, month_start, next_month, 
 
     # Get members created in the month
     members_response = supabase.table('members').select(
-        'id, sessions, unit_price, channel'
+        'id, sessions, unit_price, channel, refund_status'
     ).eq('trainer_id', trainer_id).gte(
         'created_at', month_start.isoformat()
     ).lt('created_at', next_month.isoformat()).execute()
@@ -1537,12 +2157,11 @@ def calculate_trainer_incentives_for_month(trainer_id, month_start, next_month, 
     members_list = members_response.data if members_response.data else []
 
     # Calculate sales, optionally excluding a member
+    # Note: Refunded members are now included since their 'sessions' field
+    # reflects only completed sessions (proportional refund logic)
     sales = 0
     for m in members_list:
         if exclude_member_id and m['id'] == exclude_member_id:
-            continue
-        # Skip already refunded members
-        if m.get('refund_status') == 'refunded':
             continue
         sales += calculate_member_sales_contribution(m)
 
@@ -1566,8 +2185,6 @@ def calculate_trainer_incentives_for_month(trainer_id, month_start, next_month, 
     six_month_sales = 0
     for m in six_month_members:
         if exclude_member_id and m['id'] == exclude_member_id:
-            continue
-        if m.get('refund_status') == 'refunded':
             continue
         six_month_sales += calculate_member_sales_contribution(m)
 
@@ -1620,7 +2237,7 @@ def calculate_refund_deduction(member_id):
 @app.route('/members/<member_id>/refund', methods=['POST'])
 @login_required
 def refund_member(member_id):
-    """Process a member refund"""
+    """Process a member refund with proportional calculation based on completed sessions"""
     user = session['user']
 
     # Admins and trainers can process refunds
@@ -1654,10 +2271,24 @@ def refund_member(member_id):
             flash('환불 처리 권한이 없습니다.', 'error')
             return redirect(url_for('view_member', member_id=member_id))
 
-    # Calculate the deduction amount
-    deduction_amount, original_month = calculate_refund_deduction(member_id)
+    # Count completed sessions for this member
+    completed_sessions_response = supabase.table('schedules').select('id').eq('member_id', member_id).eq('status', '수업 완료').execute()
+    completed_sessions = len(completed_sessions_response.data) if completed_sessions_response.data else 0
 
-    # Determine which month to apply the deduction
+    # Original values
+    original_sessions = member['sessions']
+    unit_price = member['unit_price']
+
+    # Calculate proportional amounts
+    # Original: sessions × unit_price (e.g., 10 sessions × 10,000 = 100,000)
+    # Completed: completed_sessions × unit_price (e.g., 4 sessions × 10,000 = 40,000)
+    # Refund: remaining_sessions × unit_price (e.g., 6 sessions × 10,000 = 60,000)
+    original_amount = original_sessions * unit_price
+    completed_amount = completed_sessions * unit_price
+    refund_amount = original_amount - completed_amount
+    remaining_sessions = original_sessions - completed_sessions
+
+    # Determine current month
     current_month = datetime.now(KST).date().replace(day=1)
 
     # Check if member was created in current month
@@ -1667,12 +2298,20 @@ def refund_member(member_id):
     is_same_month = (member_month.year == current_month.year and
                      member_month.month == current_month.month)
 
+    # Calculate incentive deduction (only if not same month)
+    deduction_amount = 0
+    if not is_same_month and refund_amount > 0:
+        deduction_amount, _ = calculate_refund_deduction(member_id)
+
     try:
-        # Update member with refund info
+        # Update member with refund info and proportional session count
         update_data = {
             'refund_status': 'refunded',
+            'original_sessions': original_sessions,  # Store original sessions before refund
+            'sessions': completed_sessions,  # Update sessions to completed only (매출 will reflect this)
             'refund_amount': int(deduction_amount) if not is_same_month else 0,
-            'refund_original_month': original_month.isoformat() if original_month else None,
+            'refund_sessions': remaining_sessions,  # Number of sessions refunded
+            'refund_original_month': member_month.isoformat(),
             'refund_applied_month': current_month.isoformat(),
             'refunded_at': datetime.now(KST).isoformat(),
             'refunded_by': user['id']
@@ -1680,10 +2319,15 @@ def refund_member(member_id):
 
         supabase.table('members').update(update_data).eq('id', member_id).execute()
 
-        if is_same_month:
-            flash(f'회원 환불 처리가 완료되었습니다. (동월 등록 - 계약금액 제외)', 'success')
+        if completed_sessions == 0:
+            msg = f'회원 환불 처리가 완료되었습니다. (완료된 수업 없음 - 전액 환불)'
         else:
-            flash(f'회원 환불 처리가 완료되었습니다. (차감액: {int(deduction_amount):,}원)', 'success')
+            msg = f'회원 환불 처리가 완료되었습니다. (완료: {completed_sessions}회, 환불: {remaining_sessions}회, 조정 매출: {completed_amount:,}원)'
+
+        if not is_same_month and deduction_amount > 0:
+            msg += f' (인센티브 차감: {int(deduction_amount):,}원)'
+
+        flash(msg, 'success')
 
     except Exception as e:
         flash(f'환불 처리 중 오류가 발생했습니다: {str(e)}', 'error')
@@ -1716,23 +2360,179 @@ def cancel_refund(member_id):
         return redirect(url_for('view_member', member_id=member_id))
 
     try:
-        # Clear refund info
+        # Restore original sessions if available
+        original_sessions = member.get('original_sessions')
+
+        # Clear refund info and restore sessions
         update_data = {
             'refund_status': None,
             'refund_amount': None,
+            'refund_sessions': None,
             'refund_original_month': None,
             'refund_applied_month': None,
             'refunded_at': None,
-            'refunded_by': None
+            'refunded_by': None,
+            'original_sessions': None
         }
 
+        # Restore original sessions if they were saved
+        if original_sessions:
+            update_data['sessions'] = original_sessions
+
         supabase.table('members').update(update_data).eq('id', member_id).execute()
-        flash('환불이 취소되었습니다.', 'success')
+
+        if original_sessions:
+            flash(f'환불이 취소되었습니다. (수업 횟수 복원: {original_sessions}회)', 'success')
+        else:
+            flash('환불이 취소되었습니다.', 'success')
 
     except Exception as e:
         flash(f'환불 취소 중 오류가 발생했습니다: {str(e)}', 'error')
 
     return redirect(url_for('view_member', member_id=member_id))
+
+
+@app.route('/members/<member_id>/transfer', methods=['GET', 'POST'])
+@login_required
+def transfer_member(member_id):
+    """Transfer a member to another trainer in the same branch (회원 인계)"""
+    user = session['user']
+
+    # Get member info
+    member_response = supabase.table('members').select(
+        '*, trainer:users!members_trainer_id_fkey(id, name, branch_id)'
+    ).eq('id', member_id).execute()
+
+    if not member_response.data:
+        flash('회원을 찾을 수 없습니다.', 'error')
+        return redirect(url_for('members'))
+
+    member = member_response.data[0]
+
+    # Check trainer permission - can only transfer own members
+    if user['role'] == 'trainer':
+        if member['trainer_id'] != user['id']:
+            flash('본인 회원만 인계할 수 있습니다.', 'error')
+            return redirect(url_for('view_member', member_id=member_id))
+
+    # Check if already refunded or transferred
+    if member.get('refund_status') == 'refunded':
+        flash('환불 처리된 회원은 인계할 수 없습니다.', 'error')
+        return redirect(url_for('view_member', member_id=member_id))
+
+    if member.get('transfer_status') == 'transferred':
+        flash('이미 인계된 회원입니다.', 'error')
+        return redirect(url_for('view_member', member_id=member_id))
+
+    # Get the trainer's branch
+    from_trainer = member.get('trainer')
+    if not from_trainer:
+        flash('담당 트레이너 정보를 찾을 수 없습니다.', 'error')
+        return redirect(url_for('view_member', member_id=member_id))
+
+    branch_id = from_trainer.get('branch_id')
+
+    # Check branch_admin permission
+    if user['role'] == 'branch_admin' and user['branch_id'] != branch_id:
+        flash('해당 지점의 회원만 인계할 수 있습니다.', 'error')
+        return redirect(url_for('view_member', member_id=member_id))
+
+    # Get other trainers in the same branch
+    trainers_response = supabase.table('users').select('id, name').eq(
+        'branch_id', branch_id
+    ).eq('role', 'trainer').neq('id', member['trainer_id']).execute()
+
+    available_trainers = trainers_response.data if trainers_response.data else []
+
+    if request.method == 'GET':
+        # Show transfer form
+        return render_template('transfer_member.html',
+                               user=user,
+                               member=member,
+                               trainers=available_trainers)
+
+    # POST - Process the transfer
+    new_trainer_id = request.form.get('new_trainer_id')
+    if not new_trainer_id:
+        flash('인계받을 트레이너를 선택해주세요.', 'error')
+        return redirect(url_for('transfer_member', member_id=member_id))
+
+    # Verify new trainer is in same branch
+    new_trainer = next((t for t in available_trainers if t['id'] == new_trainer_id), None)
+    if not new_trainer:
+        flash('유효하지 않은 트레이너입니다.', 'error')
+        return redirect(url_for('transfer_member', member_id=member_id))
+
+    # Count completed sessions for this member
+    completed_sessions_response = supabase.table('schedules').select('id').eq(
+        'member_id', member_id
+    ).eq('status', '수업 완료').execute()
+    completed_sessions = len(completed_sessions_response.data) if completed_sessions_response.data else 0
+
+    # Original values
+    original_sessions = member['sessions']
+    unit_price = member['unit_price']
+    remaining_sessions = original_sessions - completed_sessions
+
+    if remaining_sessions <= 0:
+        flash('남은 세션이 없어 인계할 수 없습니다.', 'error')
+        return redirect(url_for('view_member', member_id=member_id))
+
+    # Calculate amounts
+    completed_amount = completed_sessions * unit_price
+    remaining_amount = remaining_sessions * unit_price
+
+    current_month = datetime.now(KST).date().replace(day=1)
+
+    try:
+        # 1. Update original member record (similar to refund - proportional)
+        original_update = {
+            'transfer_status': 'transferred',
+            'original_sessions': original_sessions,
+            'sessions': completed_sessions,  # Keep only completed sessions for 매출
+            'transferred_to': new_trainer_id,
+            'transferred_sessions': remaining_sessions,
+            'transferred_at': datetime.now(KST).isoformat(),
+            'transferred_by': user['id']
+        }
+        supabase.table('members').update(original_update).eq('id', member_id).execute()
+
+        # 2. Create new member record for the new trainer with remaining sessions
+        new_member_data = {
+            'member_name': member['member_name'],
+            'phone': member['phone'],
+            'payment_method': member['payment_method'],
+            'sessions': remaining_sessions,
+            'unit_price': unit_price,
+            'channel': member['channel'],
+            'trainer_id': new_trainer_id,
+            'transfer_status': 'received',
+            'transferred_from': member_id,
+            'transferred_from_trainer': member['trainer_id'],
+            'signature': member.get('signature')
+        }
+        new_member_response = supabase.table('members').insert(new_member_data).execute()
+        new_member_id = new_member_response.data[0]['id'] if new_member_response.data else None
+
+        # 3. Remove all future scheduled sessions (status='계획') for the original member
+        today = datetime.now(KST).date().isoformat()
+        deleted_schedules = supabase.table('schedules').delete().eq(
+            'member_id', member_id
+        ).eq('status', '계획').gte('date', today).execute()
+        deleted_count = len(deleted_schedules.data) if deleted_schedules.data else 0
+
+        transfer_msg = f'회원 인계가 완료되었습니다. ({from_trainer["name"]} → {new_trainer["name"]}, 완료: {completed_sessions}회, 인계: {remaining_sessions}회)'
+        if deleted_count > 0:
+            transfer_msg += f' 예정된 수업 {deleted_count}개가 삭제되었습니다.'
+        flash(transfer_msg, 'success')
+
+        if new_member_id:
+            return redirect(url_for('view_member', member_id=new_member_id))
+        return redirect(url_for('members'))
+
+    except Exception as e:
+        flash(f'회원 인계 중 오류가 발생했습니다: {str(e)}', 'error')
+        return redirect(url_for('view_member', member_id=member_id))
 
 
 def get_trainer_dayoffs(trainer_ids, month_str):
@@ -1817,16 +2617,14 @@ def salary():
         refund_response = supabase.table('members').select('refund_amount').eq('trainer_id', user['id']).eq('refund_status', 'refunded').eq('refund_applied_month', month_start.isoformat()).execute()
         refund_deductions = sum(m.get('refund_amount', 0) or 0 for m in (refund_response.data or []))
 
-        # Calculate sales with 50% for WI channel (exclude refunded members)
+        # Calculate sales with 50% for WI channel (refunded members included with proportional amount)
         sales = sum(
             m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
             for m in members_list
-            if m.get('refund_status') != 'refunded'
         )
         six_month_sales = sum(
             m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
             for m in six_month_members
-            if m.get('refund_status') != 'refunded'
         )
         incentive = calculate_incentive(sales, salary_settings)
         master_bonus = calculate_master_trainer_bonus(six_month_sales, salary_settings)
@@ -1851,7 +2649,19 @@ def salary():
         dayoff_days = trainer_dayoffs.get(user['id'], 0)
         dayoff_deduction = calculate_dayoff_deduction(dayoff_days)
 
-        total_salary = incentive + master_bonus + lesson_fee_main + lesson_fee_other - int(refund_deductions) - dayoff_deduction
+        # Calculate class count and class incentive (수업당 인센)
+        class_count = len(schedules_list)
+        class_incentive = calculate_class_incentive(class_count, sales)
+
+        # Calculate OT incentive
+        ot_session_count, ot_incentive = calculate_ot_incentive(user['id'], month_start, next_month)
+
+        # Get salary adjustments for this trainer
+        adjustments_response = supabase.table('salary_adjustments').select('*').eq('trainer_id', user['id']).eq('month', month_key).order('created_at').execute()
+        adjustments = adjustments_response.data if adjustments_response.data else []
+        adjustment_total = sum(a.get('amount', 0) for a in adjustments)
+
+        total_salary = incentive + class_incentive + master_bonus + lesson_fee_main + lesson_fee_other + ot_incentive + adjustment_total - int(refund_deductions) - dayoff_deduction
 
         trainer_data.append({
             'id': user['id'],
@@ -1860,6 +2670,10 @@ def salary():
             'sales': sales,
             'six_month_sales': six_month_sales,
             'incentive': incentive,
+            'class_count': class_count,
+            'class_incentive': class_incentive,
+            'ot_session_count': ot_session_count,
+            'ot_incentive': ot_incentive,
             'master_bonus': master_bonus,
             'lesson_fee_base_main': lesson_fee_base_main,
             'lesson_fee_base_other': lesson_fee_base_other,
@@ -1870,6 +2684,8 @@ def salary():
             'refund_deduction': int(refund_deductions),
             'dayoff_days': dayoff_days,
             'dayoff_deduction': dayoff_deduction,
+            'adjustments': adjustments,
+            'adjustment_total': adjustment_total,
             'total_salary': total_salary
         })
         total_sales = sales
@@ -1931,12 +2747,9 @@ def salary():
                 trainer_member_prices[tid] = {}
             trainer_member_prices[tid][m['id']] = m['unit_price']
 
-        # Calculate sales (매출) per trainer - current month (50% for WI channel, exclude refunded)
+        # Calculate sales (매출) per trainer - current month (50% for WI, refunded included with proportional amount)
         trainer_sales = {}
         for member in members_list:
-            # Skip refunded members
-            if member.get('refund_status') == 'refunded':
-                continue
             tid = member['trainer_id']
             contract_amount = member['sessions'] * member['unit_price']
             # Apply 50% if channel is WI
@@ -1944,12 +2757,9 @@ def salary():
                 contract_amount = contract_amount * 0.5
             trainer_sales[tid] = trainer_sales.get(tid, 0) + contract_amount
 
-        # Calculate 6-month sales per trainer (50% for WI channel, exclude refunded)
+        # Calculate 6-month sales per trainer (50% for WI, refunded included with proportional amount)
         trainer_six_month_sales = {}
         for member in six_month_members:
-            # Skip refunded members
-            if member.get('refund_status') == 'refunded':
-                continue
             tid = member['trainer_id']
             contract_amount = member['sessions'] * member['unit_price']
             # Apply 50% if channel is WI
@@ -1957,8 +2767,9 @@ def salary():
                 contract_amount = contract_amount * 0.5
             trainer_six_month_sales[tid] = trainer_six_month_sales.get(tid, 0) + contract_amount
 
-        # Calculate lesson fee base per trainer
+        # Calculate lesson fee base per trainer and count classes
         trainer_lesson_fees = {}
+        trainer_class_counts = {}
         for schedule in schedules_list:
             tid = schedule['trainer_id']
             member_id = schedule['member_id']
@@ -1973,8 +2784,21 @@ def salary():
             else:
                 trainer_lesson_fees[tid]['other'] += unit_price
 
+            # Count classes per trainer
+            trainer_class_counts[tid] = trainer_class_counts.get(tid, 0) + 1
+
         # Get 휴무일 for all trainers
         all_dayoffs = get_trainer_dayoffs(trainer_ids, month_key) if trainer_ids else {}
+
+        # Get salary adjustments for all trainers in this month
+        trainer_adjustments = {}
+        if trainer_ids:
+            adjustments_response = supabase.table('salary_adjustments').select('*').in_('trainer_id', trainer_ids).eq('month', month_key).order('created_at').execute()
+            for adj in (adjustments_response.data or []):
+                tid = adj['trainer_id']
+                if tid not in trainer_adjustments:
+                    trainer_adjustments[tid] = []
+                trainer_adjustments[tid].append(adj)
 
         # Build trainer data with sales and incentive
         for trainer in trainers_list:
@@ -1999,7 +2823,18 @@ def salary():
             dayoff_days = all_dayoffs.get(trainer['id'], 0)
             dayoff_deduction = calculate_dayoff_deduction(dayoff_days)
 
-            trainer_total = incentive + master_bonus + lesson_fee_main + lesson_fee_other - refund_deduction - dayoff_deduction
+            # Calculate class count and class incentive (수업당 인센)
+            class_count = trainer_class_counts.get(trainer['id'], 0)
+            class_incentive = calculate_class_incentive(class_count, sales)
+
+            # Calculate OT incentive
+            ot_session_count, ot_incentive = calculate_ot_incentive(trainer['id'], month_start, next_month)
+
+            # Get salary adjustments for this trainer
+            adjustments = trainer_adjustments.get(trainer['id'], [])
+            adjustment_total = sum(a.get('amount', 0) for a in adjustments)
+
+            trainer_total = incentive + class_incentive + master_bonus + lesson_fee_main + lesson_fee_other + ot_incentive + adjustment_total - refund_deduction - dayoff_deduction
             total_sales += sales
             total_incentive += trainer_total
 
@@ -2010,6 +2845,10 @@ def salary():
                 'sales': sales,
                 'six_month_sales': six_month_sales,
                 'incentive': incentive,
+                'class_count': class_count,
+                'class_incentive': class_incentive,
+                'ot_session_count': ot_session_count,
+                'ot_incentive': ot_incentive,
                 'master_bonus': master_bonus,
                 'lesson_fee_base_main': lesson_fee_base_main,
                 'lesson_fee_base_other': lesson_fee_base_other,
@@ -2020,6 +2859,8 @@ def salary():
                 'refund_deduction': refund_deduction,
                 'dayoff_days': dayoff_days,
                 'dayoff_deduction': dayoff_deduction,
+                'adjustments': adjustments,
+                'adjustment_total': adjustment_total,
                 'total_salary': trainer_total
             })
 
@@ -2046,43 +2887,6 @@ def salary():
                          total_sales=total_sales,
                          total_incentive=total_incentive,
                          salary_settings=salary_settings)
-
-
-@app.route('/salary/tiers/update', methods=['POST'])
-@role_required('main_admin')
-def update_salary_tiers():
-    """API endpoint to save salary tier settings - Super Admin only"""
-    user = session['user']
-
-    data = request.get_json()
-
-    try:
-        # Check if settings exist
-        existing = supabase.table('salary_settings').select('id').execute()
-
-        settings_data = {
-            'incentive_tiers': data.get('incentive_tiers', []),
-            'lesson_fee_tiers': data.get('lesson_fee_tiers', []),
-            'master_threshold': data.get('master_threshold', 9000000),
-            'master_bonus': data.get('master_bonus', 300000),
-            'other_threshold': data.get('other_threshold', 5000000),
-            'other_rate': data.get('other_rate', 40),
-            'updated_by': user['id']
-        }
-
-        if existing.data:
-            # Update existing settings
-            supabase.table('salary_settings').update(settings_data).eq(
-                'id', existing.data[0]['id']
-            ).execute()
-        else:
-            # Insert new settings
-            supabase.table('salary_settings').insert(settings_data).execute()
-
-        return jsonify({'success': True})
-
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/salary/dayoff/update', methods=['POST'])
@@ -2143,6 +2947,808 @@ def update_trainer_dayoff():
         deduction = calculate_dayoff_deduction(days)
 
         return jsonify({'success': True, 'days': days, 'deduction': deduction})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Salary adjustment routes - Main Admin only
+@app.route('/salary/adjustment/add', methods=['POST'])
+@role_required('main_admin')
+def add_salary_adjustment():
+    user = session['user']
+    try:
+        data = request.get_json()
+        trainer_id = data.get('trainer_id')
+        month = data.get('month')
+        amount = int(data.get('amount', 0))
+        memo = data.get('memo', '').strip()
+
+        if not all([trainer_id, month, memo]) or amount == 0:
+            return jsonify({'success': False, 'error': '모든 필수 항목을 입력해주세요.'}), 400
+
+        # Insert adjustment
+        supabase.table('salary_adjustments').insert({
+            'trainer_id': trainer_id,
+            'month': month,
+            'amount': amount,
+            'memo': memo,
+            'created_by': user['id']
+        }).execute()
+
+        return jsonify({'success': True})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/salary/adjustment/delete/<adjustment_id>', methods=['POST'])
+@role_required('main_admin')
+def delete_salary_adjustment(adjustment_id):
+    try:
+        supabase.table('salary_adjustments').delete().eq('id', adjustment_id).execute()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Password change route - for all users
+@app.route('/change-password', methods=['GET', 'POST'])
+@login_required
+def change_password():
+    user = session['user']
+
+    if request.method == 'POST':
+        current_password = request.form.get('current_password')
+        new_password = request.form.get('new_password')
+        confirm_password = request.form.get('confirm_password')
+
+        if not all([current_password, new_password, confirm_password]):
+            flash('모든 항목을 입력해주세요.', 'error')
+            return render_template('change_password.html', user=user)
+
+        if new_password != confirm_password:
+            flash('새 비밀번호가 일치하지 않습니다.', 'error')
+            return render_template('change_password.html', user=user)
+
+        if len(new_password) < 4:
+            flash('비밀번호는 4자 이상이어야 합니다.', 'error')
+            return render_template('change_password.html', user=user)
+
+        # Verify current password
+        user_response = supabase.table('users').select('password_hash').eq('id', user['id']).execute()
+        if not user_response.data or user_response.data[0]['password_hash'] != current_password:
+            flash('현재 비밀번호가 올바르지 않습니다.', 'error')
+            return render_template('change_password.html', user=user)
+
+        try:
+            supabase.table('users').update({'password_hash': new_password}).eq('id', user['id']).execute()
+            flash('비밀번호가 성공적으로 변경되었습니다.', 'success')
+            return redirect(url_for('dashboard'))
+        except Exception as e:
+            flash(f'비밀번호 변경 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return render_template('change_password.html', user=user)
+
+
+# Toggle user status (activate/deactivate) - Main Admin only
+@app.route('/users/<user_id>/toggle-status', methods=['POST'])
+@role_required('main_admin')
+def toggle_user_status(user_id):
+    try:
+        # Get current user status
+        user_response = supabase.table('users').select('status, name, role').eq('id', user_id).execute()
+        if not user_response.data:
+            flash('사용자를 찾을 수 없습니다.', 'error')
+            return redirect(request.referrer or url_for('dashboard'))
+
+        target_user = user_response.data[0]
+
+        # Don't allow deactivating main_admin
+        if target_user['role'] == 'main_admin':
+            flash('총관리자는 비활성화할 수 없습니다.', 'error')
+            return redirect(request.referrer or url_for('dashboard'))
+
+        current_status = target_user.get('status', '활성화')
+        new_status = '비활성화' if current_status == '활성화' else '활성화'
+
+        supabase.table('users').update({'status': new_status}).eq('id', user_id).execute()
+        flash(f'{target_user["name"]}님이 {new_status} 되었습니다.', 'success')
+
+    except Exception as e:
+        flash(f'상태 변경 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return redirect(request.referrer or url_for('dashboard'))
+
+
+# Delete user - Main Admin only
+@app.route('/users/<user_id>/delete', methods=['POST'])
+@role_required('main_admin')
+def delete_user(user_id):
+    try:
+        # Get user info first
+        user_response = supabase.table('users').select('name, role').eq('id', user_id).execute()
+        if not user_response.data:
+            flash('사용자를 찾을 수 없습니다.', 'error')
+            return redirect(request.referrer or url_for('dashboard'))
+
+        target_user = user_response.data[0]
+
+        # Don't allow deleting main_admin
+        if target_user['role'] == 'main_admin':
+            flash('총관리자는 삭제할 수 없습니다.', 'error')
+            return redirect(request.referrer or url_for('dashboard'))
+
+        # Delete the user
+        supabase.table('users').delete().eq('id', user_id).execute()
+        flash(f'{target_user["name"]}님이 삭제되었습니다.', 'success')
+
+    except Exception as e:
+        flash(f'사용자 삭제 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return redirect(request.referrer or url_for('dashboard'))
+
+
+# ==================== OT MEMBER MANAGEMENT ====================
+
+def check_and_return_expired_ot_members(branch_id=None):
+    """
+    Check for OT assignments past deadline and return them to branch admin pool.
+    Uses ot_assignments table for individual session tracking.
+    Called on page load of relevant pages.
+    """
+    now = datetime.now(KST)
+
+    try:
+        # Find expired OT assignments (status='assigned' and deadline passed)
+        expired_assignments = supabase.table('ot_assignments').select(
+            '*, member:members!ot_assignments_member_id_fkey(id, member_name, branch_id)'
+        ).eq('status', 'assigned').lt('deadline', now.isoformat()).execute().data or []
+
+        for assignment in expired_assignments:
+            # Check if there's a completed schedule for this assignment
+            schedules_response = supabase.table('schedules').select('id, status').eq(
+                'member_id', assignment['member_id']
+            ).eq('trainer_id', assignment['trainer_id']).execute()
+
+            completed = False
+            for sch in (schedules_response.data or []):
+                if sch['status'] == '수업 완료':
+                    completed = True
+                    break
+
+            if not completed:
+                # Not completed - return this assignment to pool
+                supabase.table('ot_assignments').update({
+                    'status': 'returned',
+                    'returned_at': now.isoformat()
+                }).eq('id', assignment['id']).execute()
+
+                # Update member's remaining sessions
+                member_response = supabase.table('members').select('ot_remaining_sessions, ot_status').eq(
+                    'id', assignment['member_id']
+                ).execute()
+
+                if member_response.data:
+                    member = member_response.data[0]
+                    new_remaining = (member.get('ot_remaining_sessions') or 0) + 1
+
+                    # Check if there are still other active assignments
+                    other_assignments = supabase.table('ot_assignments').select('id').eq(
+                        'member_id', assignment['member_id']
+                    ).eq('status', 'assigned').execute()
+
+                    new_status = 'partial' if (other_assignments.data and len(other_assignments.data) > 0) else 'unassigned'
+                    if new_remaining >= member_response.data[0].get('sessions', 1):
+                        new_status = 'unassigned'
+
+                    supabase.table('members').update({
+                        'ot_remaining_sessions': new_remaining,
+                        'ot_status': new_status
+                    }).eq('id', assignment['member_id']).execute()
+
+                # Record history
+                supabase.table('ot_assignment_history').insert({
+                    'member_id': assignment['member_id'],
+                    'trainer_id': assignment['trainer_id'],
+                    'action': 'returned',
+                    'notes': f'{assignment["session_number"]}차 기한 만료로 자동 반환'
+                }).execute()
+    except Exception as e:
+        print(f"Error in check_and_return_expired_ot_members: {e}")
+
+
+def check_ot_session_completion(member_id):
+    """
+    Check if OT member has completed all sessions and update status accordingly.
+    Called after completing a session.
+    """
+    try:
+        # Get member info
+        member_response = supabase.table('members').select(
+            'id, sessions, member_type, ot_status'
+        ).eq('id', member_id).execute()
+
+        if not member_response.data:
+            return
+
+        member = member_response.data[0]
+
+        # Only check OT members that are in active states
+        if member.get('member_type') != 'OT회원':
+            return
+
+        if member.get('ot_status') not in ['assigned', 'partial', None]:
+            return
+
+        # Count completed OT assignments (more reliable than counting schedules)
+        assignments_response = supabase.table('ot_assignments').select('id, status').eq(
+            'member_id', member_id
+        ).execute()
+
+        assignments = assignments_response.data if assignments_response.data else []
+        completed_count = len([a for a in assignments if a['status'] == 'completed'])
+        total_assignments = len(assignments)
+
+        # Check if all assignments are completed
+        if completed_count >= member['sessions'] and completed_count > 0:
+            # All sessions completed
+            supabase.table('members').update({
+                'ot_status': 'completed'
+            }).eq('id', member_id).execute()
+
+            # Record history
+            supabase.table('ot_assignment_history').insert({
+                'member_id': member_id,
+                'action': 'all_completed',
+                'notes': f'모든 세션 완료 ({completed_count}/{member["sessions"]})'
+            }).execute()
+        elif completed_count > 0 and total_assignments < member['sessions']:
+            # Some completed, more can be assigned
+            supabase.table('members').update({
+                'ot_status': 'partial'
+            }).eq('id', member_id).execute()
+    except Exception as e:
+        print(f"Error in check_ot_session_completion: {e}")
+
+
+def calculate_ot_incentive(trainer_id, month_start, next_month):
+    """
+    Calculate OT incentive for a trainer.
+    If trainer completes >10 OT sessions in a month, they get 5,000원 per OT session.
+    Returns (ot_session_count, ot_incentive_amount)
+    """
+    try:
+        # Get all OT member IDs
+        ot_members_response = supabase.table('members').select('id').eq(
+            'member_type', 'OT회원'
+        ).execute()
+        ot_member_ids = [m['id'] for m in (ot_members_response.data or [])]
+
+        if not ot_member_ids:
+            return 0, 0
+
+        # Count completed OT sessions for this trainer in this month
+        ot_session_count = 0
+        for member_id in ot_member_ids:
+            schedules_response = supabase.table('schedules').select('id').eq(
+                'trainer_id', trainer_id
+            ).eq('member_id', member_id).eq('status', '수업 완료').gte(
+                'schedule_date', month_start.strftime('%Y-%m-%d')
+            ).lt('schedule_date', next_month.strftime('%Y-%m-%d')).execute()
+
+            ot_session_count += len(schedules_response.data) if schedules_response.data else 0
+
+        # Calculate incentive (10개 이상부터 1개당 5,000원)
+        if ot_session_count >= 10:
+            ot_incentive = ot_session_count * 5000
+        else:
+            ot_incentive = 0
+
+        return ot_session_count, ot_incentive
+    except Exception as e:
+        print(f"Error in calculate_ot_incentive: {e}")
+        return 0, 0
+
+
+def get_ot_session_number(member_id):
+    """
+    Get the current OT session number (how many completed + 1 for next session).
+    """
+    try:
+        completed_response = supabase.table('schedules').select('id').eq(
+            'member_id', member_id
+        ).eq('status', '수업 완료').execute()
+
+        completed_count = len(completed_response.data) if completed_response.data else 0
+        return completed_count + 1
+    except:
+        return 1
+
+
+# OT Members Management Page (Branch Admin)
+@app.route('/ot-members')
+@role_required('main_admin', 'branch_admin')
+def ot_members():
+    user = session['user']
+
+    # Auto-return expired OT assignments
+    check_and_return_expired_ot_members()
+
+    # Get trainers for assignment dropdown
+    if user['role'] == 'main_admin':
+        trainers_response = supabase.table('users').select('id, name, branch_id').eq('role', 'trainer').execute()
+        branches_response = supabase.table('branches').select('id, name').execute()
+        branches = branches_response.data if branches_response.data else []
+    else:
+        trainers_response = supabase.table('users').select('id, name').eq('role', 'trainer').eq('branch_id', user['branch_id']).execute()
+        branches = []
+
+    trainers = trainers_response.data if trainers_response.data else []
+
+    # Get filter
+    filter_status = request.args.get('status', 'all')
+    filter_branch_id = request.args.get('branch_id', '')
+
+    # Build query for OT members
+    query = supabase.table('members').select('*').eq('member_type', 'OT회원')
+
+    # Filter by status
+    if filter_status == 'unassigned':
+        query = query.in_('ot_status', ['unassigned', 'partial'])
+    elif filter_status == 'assigned':
+        query = query.eq('ot_status', 'assigned')
+    elif filter_status == 'completed':
+        query = query.eq('ot_status', 'completed')
+
+    ot_members_data = query.order('created_at', desc=True).execute().data or []
+
+    # Filter by branch for branch_admin
+    if user['role'] == 'branch_admin':
+        ot_members_data = [m for m in ot_members_data if m.get('branch_id') == user['branch_id']]
+    elif filter_branch_id:
+        ot_members_data = [m for m in ot_members_data if m.get('branch_id') == filter_branch_id]
+
+    # Get all OT assignments for these members
+    member_ids = [m['id'] for m in ot_members_data]
+    all_assignments = []
+    if member_ids:
+        assignments_response = supabase.table('ot_assignments').select(
+            '*, trainer:users!ot_assignments_trainer_id_fkey(id, name)'
+        ).in_('member_id', member_ids).order('session_number').execute()
+        all_assignments = assignments_response.data if assignments_response.data else []
+
+    # Add assignment info to each member
+    now = datetime.now(KST)
+    for member in ot_members_data:
+        member['assignments'] = [a for a in all_assignments if a['member_id'] == member['id']]
+
+        # Count completed sessions from assignments
+        completed_count = len([a for a in member['assignments'] if a['status'] == 'completed'])
+        member['completed_sessions'] = completed_count
+
+        # Calculate remaining to assign: total sessions - number of assignments created
+        total_sessions = member.get('sessions', 1)
+        assigned_count = len(member['assignments'])
+        member['remaining_to_assign'] = max(0, total_sessions - assigned_count)
+
+        # Get next session number
+        member['next_session_number'] = assigned_count + 1
+
+        # Calculate earliest deadline from active assignments (assigned or scheduled)
+        active_assignments = [a for a in member['assignments'] if a['status'] in ['assigned', 'scheduled']]
+        if active_assignments:
+            deadlines = []
+            for a in active_assignments:
+                if a.get('deadline'):
+                    deadlines.append(parse_datetime(a['deadline']))
+            if deadlines:
+                earliest_deadline = min(deadlines)
+                member['days_remaining'] = (earliest_deadline.date() - now.date()).days
+            else:
+                member['days_remaining'] = None
+        else:
+            member['days_remaining'] = None
+
+    return render_template('ot_members.html',
+                         user=user,
+                         ot_members=ot_members_data,
+                         trainers=trainers,
+                         branches=branches,
+                         filter_status=filter_status,
+                         filter_branch_id=filter_branch_id)
+
+
+# Assign OT Member to Trainer
+@app.route('/ot-members/<member_id>/assign', methods=['POST'])
+@role_required('main_admin', 'branch_admin')
+def assign_ot_member(member_id):
+    user = session['user']
+    trainer_id = request.form.get('trainer_id')
+    assign_sessions = request.form.get('assign_sessions', '1')
+
+    if not trainer_id:
+        flash('트레이너를 선택해주세요.', 'error')
+        return redirect(url_for('ot_members'))
+
+    try:
+        assign_sessions = int(assign_sessions)
+    except:
+        assign_sessions = 1
+
+    try:
+        # Get member info
+        member_response = supabase.table('members').select('*').eq('id', member_id).execute()
+        if not member_response.data:
+            flash('회원을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        member = member_response.data[0]
+
+        # Verify OT member
+        if member.get('member_type') != 'OT회원':
+            flash('OT 회원만 배정할 수 있습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        # Check remaining sessions
+        remaining = member.get('ot_remaining_sessions', member.get('sessions', 1))
+        if remaining <= 0:
+            flash('배정 가능한 세션이 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        if assign_sessions > remaining:
+            assign_sessions = remaining
+
+        # Get current assignment count to determine session numbers
+        existing_assignments = supabase.table('ot_assignments').select('id').eq('member_id', member_id).execute()
+        current_count = len(existing_assignments.data) if existing_assignments.data else 0
+
+        # Calculate deadline (7 days from now)
+        now = datetime.now(KST)
+        deadline = now + timedelta(days=7)
+
+        # Get trainer name for message
+        trainer_response = supabase.table('users').select('name').eq('id', trainer_id).execute()
+        trainer_name = trainer_response.data[0]['name'] if trainer_response.data else '트레이너'
+
+        # Create ot_assignments records (one for each session)
+        for i in range(assign_sessions):
+            session_number = current_count + i + 1
+            supabase.table('ot_assignments').insert({
+                'member_id': member_id,
+                'trainer_id': trainer_id,
+                'session_number': session_number,
+                'status': 'assigned',
+                'assigned_at': now.isoformat(),
+                'deadline': deadline.isoformat(),
+                'extended': False
+            }).execute()
+
+        # Update member's remaining sessions and status
+        new_remaining = remaining - assign_sessions
+        new_status = 'assigned' if new_remaining == 0 else 'partial'
+
+        supabase.table('members').update({
+            'ot_remaining_sessions': new_remaining,
+            'ot_status': new_status
+        }).eq('id', member_id).execute()
+
+        # Record history
+        supabase.table('ot_assignment_history').insert({
+            'member_id': member_id,
+            'trainer_id': trainer_id,
+            'action': 'assigned',
+            'action_by': user['id'],
+            'notes': f'{trainer_name}에게 {assign_sessions}회 배정 (기한: {deadline.strftime("%Y-%m-%d")})'
+        }).execute()
+
+        flash(f'{member["member_name"]}님 {assign_sessions}회가 {trainer_name}에게 배정되었습니다.', 'success')
+    except Exception as e:
+        flash(f'배정 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return redirect(url_for('ot_members'))
+
+
+# Extend OT Deadline
+@app.route('/ot-members/<member_id>/extend', methods=['POST'])
+@role_required('main_admin', 'branch_admin')
+def extend_ot_deadline(member_id):
+    user = session['user']
+
+    try:
+        # Get member info
+        member_response = supabase.table('members').select('*').eq('id', member_id).execute()
+        if not member_response.data:
+            flash('회원을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        member = member_response.data[0]
+
+        # Check if already extended
+        if member.get('ot_extended'):
+            flash('이미 연장된 회원입니다. 연장은 1회만 가능합니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        # Check status
+        if member.get('ot_status') != 'assigned':
+            flash('배정된 회원만 연장할 수 있습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        # Calculate new deadline
+        current_deadline = parse_datetime(member['ot_deadline'])
+        new_deadline = current_deadline + timedelta(days=7)
+
+        # Update member
+        supabase.table('members').update({
+            'ot_deadline': new_deadline.isoformat(),
+            'ot_extended': True
+        }).eq('id', member_id).execute()
+
+        # Record history
+        supabase.table('ot_assignment_history').insert({
+            'member_id': member_id,
+            'trainer_id': member.get('ot_assigned_trainer_id'),
+            'action': 'extended',
+            'action_by': user['id'],
+            'notes': f'기한 연장: {current_deadline.strftime("%Y-%m-%d")} → {new_deadline.strftime("%Y-%m-%d")}'
+        }).execute()
+
+        flash(f'{member["member_name"]}님의 기한이 {new_deadline.strftime("%Y-%m-%d")}까지 연장되었습니다.', 'success')
+    except Exception as e:
+        flash(f'연장 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return redirect(url_for('ot_members'))
+
+
+# Manually Reclaim OT Member
+@app.route('/ot-members/<member_id>/reclaim', methods=['POST'])
+@role_required('main_admin', 'branch_admin')
+def reclaim_ot_member(member_id):
+    user = session['user']
+
+    try:
+        # Get member info
+        member_response = supabase.table('members').select('*').eq('id', member_id).execute()
+        if not member_response.data:
+            flash('회원을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        member = member_response.data[0]
+
+        if member.get('ot_status') not in ['assigned', 'partial']:
+            flash('배정된 회원만 회수할 수 있습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        now = datetime.now(KST)
+
+        # Return all active assignments for this member
+        active_assignments = supabase.table('ot_assignments').select('id, trainer_id, session_number').eq(
+            'member_id', member_id
+        ).eq('status', 'assigned').execute().data or []
+
+        returned_count = 0
+        for assignment in active_assignments:
+            supabase.table('ot_assignments').update({
+                'status': 'returned',
+                'returned_at': now.isoformat()
+            }).eq('id', assignment['id']).execute()
+            returned_count += 1
+
+        # Update member status
+        supabase.table('members').update({
+            'ot_status': 'unassigned',
+            'ot_remaining_sessions': member.get('sessions', 1)
+        }).eq('id', member_id).execute()
+
+        # Record history
+        supabase.table('ot_assignment_history').insert({
+            'member_id': member_id,
+            'action': 'returned',
+            'action_by': user['id'],
+            'notes': f'지점장에 의해 수동 회수 ({returned_count}회)'
+        }).execute()
+
+        flash(f'{member["member_name"]}님이 회수되었습니다.', 'success')
+    except Exception as e:
+        flash(f'회수 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return redirect(url_for('ot_members'))
+
+
+# Trainer Extension Request (AJAX)
+@app.route('/ot-assignments/<assignment_id>/extend', methods=['POST'])
+@login_required
+def extend_ot_assignment(assignment_id):
+    """AJAX endpoint for trainers to extend their OT assignment deadline"""
+    user = session['user']
+
+    try:
+        # Get assignment
+        assignment_response = supabase.table('ot_assignments').select(
+            '*, member:members!ot_assignments_member_id_fkey(member_name)'
+        ).eq('id', assignment_id).execute()
+
+        if not assignment_response.data:
+            return jsonify({'success': False, 'error': '배정을 찾을 수 없습니다.'}), 404
+
+        assignment = assignment_response.data[0]
+
+        # Check ownership (trainer can only extend their own)
+        if user['role'] == 'trainer' and assignment['trainer_id'] != user['id']:
+            return jsonify({'success': False, 'error': '본인의 배정만 연장할 수 있습니다.'}), 403
+
+        # Check if already extended
+        if assignment.get('extended'):
+            return jsonify({'success': False, 'error': '이미 연장된 배정입니다. 연장은 1회만 가능합니다.'}), 400
+
+        # Check status
+        if assignment['status'] != 'assigned':
+            return jsonify({'success': False, 'error': '배정 상태가 아닙니다.'}), 400
+
+        # Calculate new deadline (7 days from current deadline)
+        current_deadline = parse_datetime(assignment['deadline'])
+        new_deadline = current_deadline + timedelta(days=7)
+
+        # Update assignment
+        supabase.table('ot_assignments').update({
+            'deadline': new_deadline.isoformat(),
+            'extended': True
+        }).eq('id', assignment_id).execute()
+
+        # Record history
+        supabase.table('ot_assignment_history').insert({
+            'member_id': assignment['member_id'],
+            'trainer_id': assignment['trainer_id'],
+            'action': 'extended',
+            'action_by': user['id'],
+            'notes': f'{assignment["session_number"]}차 기한 연장: {current_deadline.strftime("%Y-%m-%d")} → {new_deadline.strftime("%Y-%m-%d")}'
+        }).execute()
+
+        member_name = assignment['member']['member_name'] if assignment.get('member') else 'OT 회원'
+        return jsonify({
+            'success': True,
+            'message': f'{member_name}님의 기한이 {new_deadline.strftime("%Y-%m-%d")}까지 연장되었습니다.',
+            'new_deadline': new_deadline.strftime('%Y-%m-%d')
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'연장 중 오류: {str(e)}'}), 500
+
+
+# OT History Data (AJAX)
+@app.route('/ot-history')
+@role_required('main_admin', 'branch_admin')
+def ot_history():
+    """Get OT member history (completed and returned)"""
+    user = session['user']
+
+    try:
+        # Get completed and returned assignments
+        history_response = supabase.table('ot_assignments').select(
+            '*, member:members!ot_assignments_member_id_fkey(id, member_name, phone, branch_id), trainer:users!ot_assignments_trainer_id_fkey(name)'
+        ).in_('status', ['completed', 'returned']).order('assigned_at', desc=True).execute()
+
+        history_data = history_response.data or []
+
+        # Filter by branch for branch_admin
+        if user['role'] == 'branch_admin':
+            history_data = [h for h in history_data if h.get('member', {}).get('branch_id') == user['branch_id']]
+
+        return jsonify({'success': True, 'history': history_data})
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# Increase OT Sessions
+@app.route('/ot-members/<member_id>/increase-sessions', methods=['POST'])
+@role_required('main_admin', 'branch_admin')
+def increase_ot_sessions(member_id):
+    """Increase the number of OT sessions for a member"""
+    user = session['user']
+    additional_sessions = request.form.get('additional_sessions', '1')
+
+    try:
+        additional_sessions = int(additional_sessions)
+        if additional_sessions < 1:
+            additional_sessions = 1
+    except:
+        additional_sessions = 1
+
+    try:
+        # Get member
+        member_response = supabase.table('members').select('*').eq('id', member_id).execute()
+        if not member_response.data:
+            flash('회원을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        member = member_response.data[0]
+
+        if member.get('member_type') != 'OT회원':
+            flash('OT 회원만 세션을 추가할 수 있습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        # Update sessions count
+        new_sessions = member.get('sessions', 1) + additional_sessions
+        new_remaining = (member.get('ot_remaining_sessions') or 0) + additional_sessions
+
+        # Determine new status
+        new_status = member.get('ot_status', 'unassigned')
+        if new_remaining > 0 and new_status == 'assigned':
+            new_status = 'partial'
+        elif new_remaining > 0 and new_status == 'completed':
+            new_status = 'partial'
+
+        supabase.table('members').update({
+            'sessions': new_sessions,
+            'ot_remaining_sessions': new_remaining,
+            'ot_status': new_status
+        }).eq('id', member_id).execute()
+
+        # Record history
+        supabase.table('ot_assignment_history').insert({
+            'member_id': member_id,
+            'action': 'sessions_increased',
+            'action_by': user['id'],
+            'notes': f'세션 추가: +{additional_sessions}회 (총 {new_sessions}회)'
+        }).execute()
+
+        flash(f'{member["member_name"]}님의 세션이 {additional_sessions}회 추가되었습니다. (총 {new_sessions}회)', 'success')
+
+    except Exception as e:
+        flash(f'세션 추가 중 오류: {str(e)}', 'error')
+
+    return redirect(url_for('ot_members'))
+
+
+# Get OT Member Detail with History (AJAX)
+@app.route('/ot-members/<member_id>/detail')
+@role_required('main_admin', 'branch_admin')
+def get_ot_member_detail(member_id):
+    """Get detailed info about an OT member including assignment history"""
+    try:
+        # Get member info
+        member_response = supabase.table('members').select('*').eq('id', member_id).execute()
+        if not member_response.data:
+            return jsonify({'success': False, 'error': '회원을 찾을 수 없습니다.'}), 404
+
+        member = member_response.data[0]
+
+        # Get all assignments
+        assignments_response = supabase.table('ot_assignments').select(
+            '*, trainer:users!ot_assignments_trainer_id_fkey(id, name)'
+        ).eq('member_id', member_id).order('session_number').execute()
+        assignments = assignments_response.data or []
+
+        # Get assignment history
+        history_response = supabase.table('ot_assignment_history').select(
+            '*, trainer:users!ot_assignment_history_trainer_id_fkey(name), action_by_user:users!ot_assignment_history_action_by_fkey(name)'
+        ).eq('member_id', member_id).order('action_at', desc=True).execute()
+        history = history_response.data or []
+
+        # Check schedule status for each assignment
+        for assignment in assignments:
+            schedule_response = supabase.table('schedules').select('id, status, schedule_date').eq(
+                'member_id', member_id
+            ).eq('trainer_id', assignment['trainer_id']).execute()
+
+            assignment['schedule_status'] = 'not_scheduled'
+            assignment['schedule_date'] = None
+            for sch in (schedule_response.data or []):
+                if sch['status'] == '수업 완료':
+                    assignment['schedule_status'] = 'completed'
+                    assignment['schedule_date'] = sch['schedule_date']
+                    break
+                elif sch['status'] == '수업 계획':
+                    assignment['schedule_status'] = 'scheduled'
+                    assignment['schedule_date'] = sch['schedule_date']
+
+        return jsonify({
+            'success': True,
+            'member': member,
+            'assignments': assignments,
+            'history': history
+        })
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

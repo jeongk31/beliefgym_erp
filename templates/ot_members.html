@@ -1,0 +1,631 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<style>
+.deadline-green { color: #198754; }
+.deadline-yellow { color: #ffc107; }
+.deadline-red { color: #dc3545; }
+.ot-card {
+    transition: all 0.2s;
+    cursor: pointer;
+}
+.ot-card:hover {
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    transform: translateY(-2px);
+}
+.assignment-badge {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.4rem;
+}
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 4px;
+}
+.status-completed { background-color: #198754; }
+.status-scheduled { background-color: #0d6efd; }
+.status-not-scheduled { background-color: #dc3545; }
+</style>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h2>OT 회원 관리</h2>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-outline-secondary" onclick="showOtHistory()">
+            <i class="bi bi-clock-history me-1"></i> OT 히스토리
+        </button>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="GET" class="row align-items-center g-2">
+            <div class="col-auto">
+                <label class="col-form-label">상태:</label>
+            </div>
+            <div class="col-auto">
+                <select name="status" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="all" {% if filter_status == 'all' %}selected{% endif %}>전체</option>
+                    <option value="unassigned" {% if filter_status == 'unassigned' %}selected{% endif %}>미배정/부분배정</option>
+                    <option value="assigned" {% if filter_status == 'assigned' %}selected{% endif %}>배정완료</option>
+                    <option value="completed" {% if filter_status == 'completed' %}selected{% endif %}>완료</option>
+                </select>
+            </div>
+            {% if user.role == 'main_admin' and branches %}
+            <div class="col-auto">
+                <label class="col-form-label ms-3">지점:</label>
+            </div>
+            <div class="col-auto">
+                <select name="branch_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">전체 지점</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if filter_branch_id == branch.id %}selected{% endif %}>
+                        {{ branch.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
+        </form>
+    </div>
+</div>
+
+<!-- OT Members Grid -->
+{% if ot_members %}
+<div class="row">
+    {% for member in ot_members %}
+    <div class="col-md-6 col-lg-4 mb-3">
+        <div class="card ot-card h-100" onclick="showOtMemberDetail('{{ member.id }}')">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <div>
+                    <strong>{{ member.member_name }}</strong>
+                    {% if member.ot_status == 'unassigned' %}
+                    <span class="badge bg-secondary ms-1">미배정</span>
+                    {% elif member.ot_status == 'partial' %}
+                    <span class="badge bg-info ms-1">부분배정</span>
+                    {% elif member.ot_status == 'assigned' %}
+                    <span class="badge bg-primary ms-1">배정완료</span>
+                    {% elif member.ot_status == 'completed' %}
+                    <span class="badge bg-success ms-1">완료</span>
+                    {% endif %}
+                </div>
+                <span class="badge bg-dark">{{ member.sessions }}회</span>
+            </div>
+            <div class="card-body py-2">
+                <table class="table table-sm table-borderless mb-2">
+                    <tr>
+                        <td class="text-muted" style="width: 80px;">전화번호</td>
+                        <td>{{ member.phone }}</td>
+                    </tr>
+                    <tr>
+                        <td class="text-muted">진행상황</td>
+                        <td>
+                            <span class="text-success fw-bold">{{ member.completed_sessions or 0 }}</span> /
+                            {{ member.sessions }}회 완료
+                            {% if member.remaining_to_assign and member.remaining_to_assign > 0 %}
+                            <span class="text-muted">({{ member.remaining_to_assign }}회 미배정)</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                </table>
+
+                <!-- Current Assignments with Schedule Status -->
+                {% if member.assignments %}
+                <div class="mb-2">
+                    <small class="text-muted d-block mb-1">배정 현황:</small>
+                    {% for assignment in member.assignments %}
+                    <div class="d-flex justify-content-between align-items-center border rounded px-2 py-1 mb-1
+                        {% if assignment.status == 'completed' %}bg-success bg-opacity-10
+                        {% elif assignment.status == 'returned' %}bg-warning bg-opacity-10
+                        {% else %}bg-light{% endif %}">
+                        <div>
+                            <span class="badge {% if assignment.session_number == 1 %}bg-success{% elif assignment.session_number == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %} assignment-badge">
+                                {{ assignment.session_number }}차
+                            </span>
+                            <span class="small">{{ assignment.trainer.name if assignment.trainer else '-' }}</span>
+                        </div>
+                        <div>
+                            {% if assignment.status == 'completed' %}
+                            <span class="badge bg-success"><i class="bi bi-check"></i> 완료</span>
+                            {% elif assignment.status == 'returned' %}
+                            <span class="badge bg-warning text-dark">반환</span>
+                            {% else %}
+                            {% set deadline = assignment.deadline[:10] %}
+                            <small class="text-muted">{{ deadline }}</small>
+                            {% if assignment.extended %}<span class="badge bg-info ms-1">연장</span>{% endif %}
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
+                <!-- Deadline warning for active assignments -->
+                {% if member.days_remaining is not none and member.ot_status not in ['completed'] %}
+                <div class="mt-2 small">
+                    <span class="{% if member.days_remaining >= 5 %}deadline-green{% elif member.days_remaining >= 2 %}deadline-yellow{% else %}deadline-red{% endif %} fw-bold">
+                        {% if member.days_remaining < 0 %}
+                        <i class="bi bi-exclamation-triangle"></i> {{ member.days_remaining|abs }}일 초과
+                        {% elif member.days_remaining == 0 %}
+                        <i class="bi bi-exclamation-triangle"></i> 오늘 만료
+                        {% else %}
+                        <i class="bi bi-clock"></i> {{ member.days_remaining }}일 남음
+                        {% endif %}
+                    </span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="card-footer py-1 text-muted small d-flex justify-content-between">
+                <span>등록일: {{ member.created_at[:10] }}</span>
+                <span class="text-primary"><i class="bi bi-info-circle"></i> 클릭하여 상세보기</span>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="card-body text-center py-5">
+        <p class="text-muted mb-0">해당 조건의 OT 회원이 없습니다.</p>
+    </div>
+</div>
+{% endif %}
+
+<!-- Summary Stats -->
+<div class="row mt-4">
+    <div class="col-md-3">
+        <div class="card bg-secondary text-white">
+            <div class="card-body py-2 text-center">
+                <div class="small">미배정/부분배정</div>
+                <div class="fs-4 fw-bold">{{ ot_members|selectattr('ot_status', 'in', ['unassigned', 'partial'])|list|length }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body py-2 text-center">
+                <div class="small">배정완료</div>
+                <div class="fs-4 fw-bold">{{ ot_members|selectattr('ot_status', 'equalto', 'assigned')|list|length }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning">
+            <div class="card-body py-2 text-center">
+                <div class="small">진행중</div>
+                {% set in_progress = ot_members|selectattr('assignments', 'defined')|list %}
+                <div class="fs-4 fw-bold">
+                    {{ in_progress|selectattr('ot_status', 'in', ['assigned', 'partial'])|list|length }}
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body py-2 text-center">
+                <div class="small">완료</div>
+                <div class="fs-4 fw-bold">{{ ot_members|selectattr('ot_status', 'equalto', 'completed')|list|length }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- OT Member Detail Modal -->
+<div class="modal fade" id="otDetailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title"><i class="bi bi-person-badge me-2"></i><span id="detailMemberName">OT 회원 상세</span></h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="detailLoading" class="text-center py-4">
+                    <div class="spinner-border text-info" role="status"></div>
+                    <p class="mt-2 text-muted">로딩 중...</p>
+                </div>
+                <div id="detailContent" style="display: none;">
+                    <!-- Member Info -->
+                    <div class="card mb-3">
+                        <div class="card-body py-2">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <small class="text-muted">전화번호</small>
+                                    <div id="detailPhone">-</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">총 세션</small>
+                                    <div id="detailSessions">-</div>
+                                </div>
+                                <div class="col-md-3">
+                                    <small class="text-muted">상태</small>
+                                    <div id="detailStatus">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Add Sessions Form -->
+                    <div class="card mb-3 border-success">
+                        <div class="card-header bg-success bg-opacity-10 py-2">
+                            <strong><i class="bi bi-plus-circle me-1"></i>세션 추가</strong>
+                        </div>
+                        <div class="card-body py-2">
+                            <form method="POST" id="increaseSessionsForm" class="row g-2 align-items-center">
+                                <div class="col-auto">
+                                    <label class="col-form-label">추가 횟수:</label>
+                                </div>
+                                <div class="col-auto">
+                                    <input type="number" class="form-control form-control-sm" name="additional_sessions" min="1" max="10" value="1" style="width: 70px;">
+                                </div>
+                                <div class="col-auto">
+                                    <button type="submit" class="btn btn-sm btn-success">
+                                        <i class="bi bi-plus"></i> 세션 추가
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Assignment Form (if remaining) -->
+                    <div id="assignmentFormSection" class="card mb-3 border-primary">
+                        <div class="card-header bg-primary bg-opacity-10 py-2">
+                            <strong><i class="bi bi-person-plus me-1"></i>트레이너 배정</strong>
+                        </div>
+                        <div class="card-body py-2">
+                            <form method="POST" id="assignTrainerForm" class="row g-2 align-items-center">
+                                <div class="col-md-5">
+                                    <select name="trainer_id" class="form-select form-select-sm" required>
+                                        <option value="">트레이너 선택</option>
+                                        {% for trainer in trainers %}
+                                        <option value="{{ trainer.id }}">{{ trainer.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-3">
+                                    <select name="assign_sessions" id="assignSessionsSelect" class="form-select form-select-sm">
+                                        <option value="1">1회</option>
+                                    </select>
+                                </div>
+                                <div class="col-md-4">
+                                    <button type="submit" class="btn btn-sm btn-primary w-100">
+                                        <i class="bi bi-person-plus"></i> 배정
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Assignments List -->
+                    <div class="card mb-3">
+                        <div class="card-header py-2">
+                            <strong><i class="bi bi-list-check me-1"></i>배정 현황</strong>
+                        </div>
+                        <div class="card-body py-2" id="detailAssignments">
+                            <p class="text-muted mb-0">배정 내역이 없습니다.</p>
+                        </div>
+                    </div>
+
+                    <!-- History -->
+                    <div class="card">
+                        <div class="card-header py-2">
+                            <strong><i class="bi bi-clock-history me-1"></i>히스토리</strong>
+                        </div>
+                        <div class="card-body py-2" id="detailHistory" style="max-height: 200px; overflow-y: auto;">
+                            <p class="text-muted mb-0">히스토리가 없습니다.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-danger" id="reclaimBtn" style="display: none;" onclick="reclaimMember()">
+                    <i class="bi bi-arrow-return-left"></i> 회수
+                </button>
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- OT History Modal -->
+<div class="modal fade" id="otHistoryModal" tabindex="-1">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header bg-secondary text-white">
+                <h5 class="modal-title"><i class="bi bi-clock-history me-2"></i>OT 히스토리</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="historyLoading" class="text-center py-4">
+                    <div class="spinner-border text-secondary" role="status"></div>
+                    <p class="mt-2 text-muted">로딩 중...</p>
+                </div>
+                <div id="historyContent" style="display: none;">
+                    <!-- Filter -->
+                    <div class="mb-3 d-flex gap-2">
+                        <button class="btn btn-sm btn-outline-secondary active" onclick="filterHistory('all', this)">전체</button>
+                        <button class="btn btn-sm btn-outline-success" onclick="filterHistory('completed', this)">완료</button>
+                        <button class="btn btn-sm btn-outline-warning" onclick="filterHistory('returned', this)">반환</button>
+                    </div>
+                    <div id="historyList">
+                        <p class="text-muted">히스토리가 없습니다.</p>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// OT Member Detail
+let currentMemberId = null;
+
+function showOtMemberDetail(memberId) {
+    currentMemberId = memberId;
+    document.getElementById('detailLoading').style.display = 'block';
+    document.getElementById('detailContent').style.display = 'none';
+
+    const modal = new bootstrap.Modal(document.getElementById('otDetailModal'));
+    modal.show();
+
+    fetch(`/ot-members/${memberId}/detail`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderMemberDetail(data.member, data.assignments, data.history);
+            } else {
+                alert(data.error || '상세 정보를 불러오는데 실패했습니다.');
+                modal.hide();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('상세 정보를 불러오는 중 오류가 발생했습니다.');
+            modal.hide();
+        });
+}
+
+function renderMemberDetail(member, assignments, history) {
+    document.getElementById('detailMemberName').textContent = member.member_name;
+    document.getElementById('detailPhone').textContent = member.phone || '-';
+    document.getElementById('detailSessions').textContent = `${member.sessions}회`;
+
+    // Status badge
+    let statusHtml = '';
+    switch(member.ot_status) {
+        case 'unassigned': statusHtml = '<span class="badge bg-secondary">미배정</span>'; break;
+        case 'partial': statusHtml = '<span class="badge bg-info">부분배정</span>'; break;
+        case 'assigned': statusHtml = '<span class="badge bg-primary">배정완료</span>'; break;
+        case 'completed': statusHtml = '<span class="badge bg-success">완료</span>'; break;
+        default: statusHtml = '-';
+    }
+    document.getElementById('detailStatus').innerHTML = statusHtml;
+
+    // Setup forms
+    document.getElementById('increaseSessionsForm').action = `/ot-members/${member.id}/increase-sessions`;
+    document.getElementById('assignTrainerForm').action = `/ot-members/${member.id}/assign`;
+
+    // Update assign sessions dropdown
+    const remaining = member.ot_remaining_sessions || 0;
+    const assignSelect = document.getElementById('assignSessionsSelect');
+    assignSelect.innerHTML = '';
+    for (let i = 1; i <= remaining; i++) {
+        assignSelect.innerHTML += `<option value="${i}">${i}회</option>`;
+    }
+
+    // Show/hide assignment form
+    if (remaining > 0) {
+        document.getElementById('assignmentFormSection').style.display = 'block';
+    } else {
+        document.getElementById('assignmentFormSection').style.display = 'none';
+    }
+
+    // Show/hide reclaim button
+    const reclaimBtn = document.getElementById('reclaimBtn');
+    if (member.ot_status === 'assigned' || member.ot_status === 'partial') {
+        reclaimBtn.style.display = 'inline-block';
+    } else {
+        reclaimBtn.style.display = 'none';
+    }
+
+    // Render assignments
+    let assignmentsHtml = '';
+    if (assignments && assignments.length > 0) {
+        assignments.forEach(a => {
+            let statusBadge = '';
+            let scheduleInfo = '';
+
+            if (a.status === 'completed') {
+                statusBadge = '<span class="badge bg-success">완료</span>';
+            } else if (a.status === 'returned') {
+                statusBadge = '<span class="badge bg-warning text-dark">반환</span>';
+            } else {
+                // Check schedule status
+                if (a.schedule_status === 'completed') {
+                    statusBadge = '<span class="badge bg-success">수업완료</span>';
+                    scheduleInfo = a.schedule_date ? `(${a.schedule_date})` : '';
+                } else if (a.schedule_status === 'scheduled') {
+                    statusBadge = '<span class="badge bg-primary">예약됨</span>';
+                    scheduleInfo = a.schedule_date ? `(${a.schedule_date})` : '';
+                } else {
+                    statusBadge = '<span class="badge bg-danger">미예약</span>';
+                }
+            }
+
+            let sessionBadgeClass = a.session_number === 1 ? 'bg-success' : a.session_number === 2 ? 'bg-primary' : 'bg-warning text-dark';
+
+            assignmentsHtml += `
+                <div class="d-flex justify-content-between align-items-center border rounded px-2 py-1 mb-1">
+                    <div>
+                        <span class="badge ${sessionBadgeClass} me-1">${a.session_number}차</span>
+                        <span>${a.trainer ? a.trainer.name : '-'}</span>
+                    </div>
+                    <div>
+                        ${statusBadge}
+                        <small class="text-muted ms-1">${scheduleInfo}</small>
+                        ${a.extended ? '<span class="badge bg-info ms-1">연장</span>' : ''}
+                    </div>
+                </div>
+            `;
+        });
+    } else {
+        assignmentsHtml = '<p class="text-muted mb-0">배정 내역이 없습니다.</p>';
+    }
+    document.getElementById('detailAssignments').innerHTML = assignmentsHtml;
+
+    // Render history
+    let historyHtml = '';
+    if (history && history.length > 0) {
+        history.forEach(h => {
+            let actionIcon = '';
+            let actionText = '';
+
+            switch(h.action) {
+                case 'assigned':
+                    actionIcon = '<i class="bi bi-person-plus text-primary"></i>';
+                    actionText = '배정';
+                    break;
+                case 'extended':
+                    actionIcon = '<i class="bi bi-calendar-plus text-info"></i>';
+                    actionText = '연장';
+                    break;
+                case 'returned':
+                    actionIcon = '<i class="bi bi-arrow-return-left text-warning"></i>';
+                    actionText = '반환';
+                    break;
+                case 'completed':
+                    actionIcon = '<i class="bi bi-check-circle text-success"></i>';
+                    actionText = '완료';
+                    break;
+                case 'sessions_increased':
+                    actionIcon = '<i class="bi bi-plus-circle text-success"></i>';
+                    actionText = '세션추가';
+                    break;
+                default:
+                    actionIcon = '<i class="bi bi-circle"></i>';
+                    actionText = h.action;
+            }
+
+            const actionDate = h.action_at ? h.action_at.substring(0, 16).replace('T', ' ') : '-';
+            const actionBy = h.action_by_user ? h.action_by_user.name : '-';
+
+            historyHtml += `
+                <div class="border-bottom py-2">
+                    <div class="d-flex justify-content-between align-items-center">
+                        <div>${actionIcon} <strong>${actionText}</strong></div>
+                        <small class="text-muted">${actionDate}</small>
+                    </div>
+                    <small class="text-muted">${h.notes || ''}</small>
+                    <small class="d-block text-muted">처리: ${actionBy}</small>
+                </div>
+            `;
+        });
+    } else {
+        historyHtml = '<p class="text-muted mb-0">히스토리가 없습니다.</p>';
+    }
+    document.getElementById('detailHistory').innerHTML = historyHtml;
+
+    // Show content
+    document.getElementById('detailLoading').style.display = 'none';
+    document.getElementById('detailContent').style.display = 'block';
+}
+
+function reclaimMember() {
+    if (!currentMemberId) return;
+    if (!confirm('이 OT 회원의 모든 활성 배정을 회수하시겠습니까?')) return;
+
+    const form = document.createElement('form');
+    form.method = 'POST';
+    form.action = `/ot-members/${currentMemberId}/reclaim`;
+    document.body.appendChild(form);
+    form.submit();
+}
+
+// OT History
+let allHistoryData = [];
+
+function showOtHistory() {
+    document.getElementById('historyLoading').style.display = 'block';
+    document.getElementById('historyContent').style.display = 'none';
+
+    const modal = new bootstrap.Modal(document.getElementById('otHistoryModal'));
+    modal.show();
+
+    fetch('/ot-history')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                allHistoryData = data.history;
+                renderHistory(allHistoryData);
+            } else {
+                alert(data.error || '히스토리를 불러오는데 실패했습니다.');
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('히스토리를 불러오는 중 오류가 발생했습니다.');
+        });
+}
+
+function filterHistory(status, btn) {
+    // Update button states
+    document.querySelectorAll('#historyContent .btn-outline-secondary, #historyContent .btn-outline-success, #historyContent .btn-outline-warning').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    let filtered = allHistoryData;
+    if (status !== 'all') {
+        filtered = allHistoryData.filter(h => h.status === status);
+    }
+    renderHistory(filtered);
+}
+
+function renderHistory(history) {
+    let html = '';
+
+    if (history && history.length > 0) {
+        history.forEach(h => {
+            let statusBadge = '';
+            if (h.status === 'completed') {
+                statusBadge = '<span class="badge bg-success">완료</span>';
+            } else if (h.status === 'returned') {
+                statusBadge = '<span class="badge bg-warning text-dark">반환</span>';
+            }
+
+            let sessionBadgeClass = h.session_number === 1 ? 'bg-success' : h.session_number === 2 ? 'bg-primary' : 'bg-warning text-dark';
+            const memberName = h.member ? h.member.member_name : '-';
+            const memberPhone = h.member ? h.member.phone : '-';
+            const trainerName = h.trainer ? h.trainer.name : '-';
+            const assignedDate = h.assigned_at ? h.assigned_at.substring(0, 10) : '-';
+
+            html += `
+                <div class="card mb-2">
+                    <div class="card-body py-2">
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div>
+                                <strong>${memberName}</strong>
+                                <span class="badge ${sessionBadgeClass} ms-1">${h.session_number}차</span>
+                                ${statusBadge}
+                            </div>
+                            <small class="text-muted">${assignedDate}</small>
+                        </div>
+                        <div class="small text-muted">
+                            전화: ${memberPhone} | 트레이너: ${trainerName}
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    } else {
+        html = '<p class="text-muted">해당 조건의 히스토리가 없습니다.</p>';
+    }
+
+    document.getElementById('historyList').innerHTML = html;
+    document.getElementById('historyLoading').style.display = 'none';
+    document.getElementById('historyContent').style.display = 'block';
+}
+</script>
+{% endblock %}

@@ -38,21 +38,44 @@
                         <th>이메일</th>
                         <th>담당 지점</th>
                         <th>등록일</th>
+                        <th>상태</th>
+                        <th>관리</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for admin in admins %}
-                    <tr>
+                    <tr class="{{ 'table-secondary' if admin.status == '비활성화' else '' }}">
                         <td>{{ admin.name }}</td>
                         <td>{{ admin.email }}</td>
                         <td>
                             <span class="badge bg-primary">{{ admin.branch.name if admin.branch else '-' }}</span>
                         </td>
                         <td>{{ admin.created_at[:10] }}</td>
+                        <td>
+                            <span class="badge {{ 'bg-success' if admin.status != '비활성화' else 'bg-secondary' }}">
+                                {{ admin.status if admin.status else '활성화' }}
+                            </span>
+                        </td>
+                        <td>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <form method="POST" action="{{ url_for('toggle_user_status', user_id=admin.id) }}" class="d-inline">
+                                    <button type="submit" class="btn btn-sm {{ 'btn-warning' if admin.status != '비활성화' else 'btn-success' }}"
+                                            onclick="return confirm('{{ admin.name }}님을 {{ '비활성화' if admin.status != '비활성화' else '활성화' }} 하시겠습니까?')">
+                                        {{ '비활성화' if admin.status != '비활성화' else '활성화' }}
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('delete_user', user_id=admin.id) }}" class="d-inline">
+                                    <button type="submit" class="btn btn-sm btn-danger"
+                                            onclick="return confirm('정말로 {{ admin.name }}님을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')">
+                                        삭제
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="4" class="text-center text-muted py-4">등록된 지점장이 없습니다.</td>
+                        <td colspan="6" class="text-center text-muted py-4">등록된 지점장이 없습니다.</td>
                     </tr>
                     {% endfor %}
                 </tbody>

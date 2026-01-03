@@ -9,25 +9,13 @@
             </div>
             <div class="card-body">
                 <form method="POST" id="memberForm">
+                    <!-- Member Type Selection -->
                     <div class="row mb-3">
                         <div class="col-md-6">
-                            <label for="member_name" class="form-label">회원명 *</label>
-                            <input type="text" class="form-control" id="member_name" name="member_name" required>
-                        </div>
-                        <div class="col-md-6">
-                            <label for="phone" class="form-label">전화번호 *</label>
-                            <input type="tel" class="form-control" id="phone" name="phone" placeholder="010-0000-0000" required>
-                        </div>
-                    </div>
-
-                    <div class="row mb-3">
-                        <div class="col-md-6">
-                            <label for="payment_method" class="form-label">결제수단 *</label>
-                            <select class="form-select" id="payment_method" name="payment_method" required>
-                                <option value="">선택하세요</option>
-                                <option value="현금">현금</option>
-                                <option value="카드">카드</option>
-                                <option value="계좌이체">계좌이체</option>
+                            <label for="member_type" class="form-label">회원 유형 *</label>
+                            <select class="form-select" id="member_type" name="member_type" required>
+                                <option value="일반회원">일반회원</option>
+                                <option value="OT회원">OT회원</option>
                             </select>
                         </div>
                         <div class="col-md-6">
@@ -44,18 +32,63 @@
 
                     <div class="row mb-3">
                         <div class="col-md-6">
-                            <label for="sessions" class="form-label">세션 수 *</label>
-                            <input type="number" class="form-control" id="sessions" name="sessions" min="1" required>
+                            <label for="member_name" class="form-label">회원명 *</label>
+                            <input type="text" class="form-control" id="member_name" name="member_name" required>
                         </div>
                         <div class="col-md-6">
-                            <label for="unit_price" class="form-label">단가 (원) *</label>
+                            <label for="phone" class="form-label">전화번호 *</label>
+                            <input type="tel" class="form-control" id="phone" name="phone" placeholder="010-0000-0000" required>
+                        </div>
+                    </div>
+
+                    <!-- Payment fields - hidden for OT members -->
+                    <div class="row mb-3" id="paymentFields">
+                        <div class="col-md-4">
+                            <label for="payment_method" class="form-label">결제수단 <span class="required-star">*</span></label>
+                            <select class="form-select" id="payment_method" name="payment_method" required>
+                                <option value="">선택하세요</option>
+                                <option value="현금">현금</option>
+                                <option value="카드">카드</option>
+                                <option value="계좌이체">계좌이체</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="sessions" class="form-label">세션 수 <span class="required-star">*</span></label>
+                            <input type="number" class="form-control" id="sessions" name="sessions" min="1" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="unit_price" class="form-label">단가 (원) <span class="required-star">*</span></label>
                             <input type="number" class="form-control" id="unit_price" name="unit_price" min="0" step="1000" required>
                         </div>
                     </div>
 
-                    {% if user.role in ['main_admin', 'branch_admin'] %}
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label for="age" class="form-label">연령</label>
+                            <input type="number" class="form-control" id="age" name="age" min="1" max="120" placeholder="선택사항">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="gender" class="form-label">성별</label>
+                            <select class="form-select" id="gender" name="gender">
+                                <option value="">선택하세요</option>
+                                <option value="남">남</option>
+                                <option value="여">여</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="occupation" class="form-label">직업</label>
+                            <input type="text" class="form-control" id="occupation" name="occupation" placeholder="선택사항">
+                        </div>
+                    </div>
+
                     <div class="mb-3">
-                        <label for="trainer_id" class="form-label">담당 트레이너 *</label>
+                        <label for="special_notes" class="form-label">특이사항</label>
+                        <textarea class="form-control" id="special_notes" name="special_notes" rows="2" placeholder="선택사항"></textarea>
+                    </div>
+
+                    {% if user.role in ['main_admin', 'branch_admin'] %}
+                    <div class="mb-3" id="trainerField">
+                        <label for="trainer_id" class="form-label">담당 트레이너 <span class="required-star">*</span></label>
                         <select class="form-select" id="trainer_id" name="trainer_id" required>
                             <option value="">선택하세요</option>
                             {% for trainer in trainers %}
@@ -68,10 +101,16 @@
                     <div class="mb-3">
                         <label class="form-label">회원 서명 *</label>
                         <div class="border rounded p-2 bg-light">
-                            <canvas id="signatureCanvas" width="600" height="200" class="border bg-white w-100"></canvas>
+                            <canvas id="signatureCanvas" width="600" height="200" class="border bg-white w-100" style="touch-action: none;"></canvas>
                         </div>
                         <input type="hidden" id="signature" name="signature">
                         <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearSignature()">서명 지우기</button>
+                    </div>
+
+                    <!-- OT Member Notice -->
+                    <div id="otNotice" class="alert alert-info mb-3" style="display: none;">
+                        <i class="bi bi-info-circle me-1"></i>
+                        <strong>OT 회원 안내:</strong> OT 회원은 무료이며, 등록 후 지점장이 트레이너에게 배정합니다. 배정 후 7일 이내에 세션을 완료해야 합니다.
                     </div>
 
                     <div class="d-flex gap-2">
@@ -88,6 +127,46 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/signature.js') }}"></script>
 <script>
+    // Show/hide OT notice, payment fields, and trainer based on member type
+    document.getElementById('member_type').addEventListener('change', function() {
+        const otNotice = document.getElementById('otNotice');
+        const paymentFields = document.getElementById('paymentFields');
+        const paymentMethod = document.getElementById('payment_method');
+        const sessions = document.getElementById('sessions');
+        const unitPrice = document.getElementById('unit_price');
+        const trainerField = document.getElementById('trainerField');
+        const trainerId = document.getElementById('trainer_id');
+
+        if (this.value === 'OT회원') {
+            otNotice.style.display = 'block';
+            paymentFields.style.display = 'none';
+            // Hide trainer dropdown for OT (goes to pool)
+            if (trainerField) {
+                trainerField.style.display = 'none';
+                if (trainerId) trainerId.removeAttribute('required');
+            }
+            // Remove required and set default values for OT
+            paymentMethod.removeAttribute('required');
+            sessions.removeAttribute('required');
+            unitPrice.removeAttribute('required');
+            paymentMethod.value = '';
+            sessions.value = '1';
+            unitPrice.value = '0';
+        } else {
+            otNotice.style.display = 'none';
+            paymentFields.style.display = 'flex';
+            // Show trainer dropdown for regular members
+            if (trainerField) {
+                trainerField.style.display = 'block';
+                if (trainerId) trainerId.setAttribute('required', 'required');
+            }
+            // Restore required for regular members
+            paymentMethod.setAttribute('required', 'required');
+            sessions.setAttribute('required', 'required');
+            unitPrice.setAttribute('required', 'required');
+        }
+    });
+
     document.getElementById('memberForm').addEventListener('submit', function(e) {
         const signatureData = document.getElementById('signature').value;
         if (!signatureData) {

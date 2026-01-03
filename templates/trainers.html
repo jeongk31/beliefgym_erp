@@ -38,25 +38,56 @@
                         <th>이메일</th>
                         <th>지점</th>
                         <th>등록일</th>
+                        {% if user.role == 'main_admin' %}
+                        <th>상태</th>
+                        {% endif %}
                         <th>회원</th>
+                        {% if user.role == 'main_admin' %}
+                        <th>관리</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
                     {% for trainer in trainers %}
-                    <tr>
+                    <tr class="{{ 'table-secondary' if trainer.status == '비활성화' else '' }}">
                         <td><strong>{{ trainer.name }}</strong></td>
                         <td>{{ trainer.email }}</td>
                         <td>{{ trainer.branch.name if trainer.branch else '-' }}</td>
                         <td>{{ trainer.created_at[:10] }}</td>
+                        {% if user.role == 'main_admin' %}
+                        <td>
+                            <span class="badge {{ 'bg-success' if trainer.status != '비활성화' else 'bg-secondary' }}">
+                                {{ trainer.status if trainer.status else '활성화' }}
+                            </span>
+                        </td>
+                        {% endif %}
                         <td>
                             <a href="{{ url_for('members', trainer_id=trainer.id) }}" class="btn btn-sm btn-outline-primary">
                                 회원 보기
                             </a>
                         </td>
+                        {% if user.role == 'main_admin' %}
+                        <td>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <form method="POST" action="{{ url_for('toggle_user_status', user_id=trainer.id) }}" class="d-inline">
+                                    <button type="submit" class="btn btn-sm {{ 'btn-warning' if trainer.status != '비활성화' else 'btn-success' }}"
+                                            onclick="return confirm('{{ trainer.name }}님을 {{ '비활성화' if trainer.status != '비활성화' else '활성화' }} 하시겠습니까?')">
+                                        {{ '비활성화' if trainer.status != '비활성화' else '활성화' }}
+                                    </button>
+                                </form>
+                                <form method="POST" action="{{ url_for('delete_user', user_id=trainer.id) }}" class="d-inline">
+                                    <button type="submit" class="btn btn-sm btn-danger"
+                                            onclick="return confirm('정말로 {{ trainer.name }}님을 삭제하시겠습니까? 이 작업은 되돌릴 수 없습니다.')">
+                                        삭제
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                        {% endif %}
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="5" class="text-center text-muted py-4">등록된 트레이너가 없습니다.</td>
+                        <td colspan="{{ 7 if user.role == 'main_admin' else 5 }}" class="text-center text-muted py-4">등록된 트레이너가 없습니다.</td>
                     </tr>
                     {% endfor %}
                 </tbody>

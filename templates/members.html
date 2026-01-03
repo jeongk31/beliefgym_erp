@@ -12,7 +12,10 @@
         <button type="button" class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#refundModal">
             <i class="bi bi-arrow-counterclockwise"></i> 회원 환불
         </button>
-        <a href="{{ url_for('add_member') }}" class="btn btn-primary">+ 새 회원 등록</a>
+        <button type="button" class="btn btn-info" data-bs-toggle="modal" data-bs-target="#transferModal">
+            <i class="bi bi-arrow-right-circle"></i> 회원 인계
+        </button>
+        <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addMemberModal">+ 새 회원 등록</button>
     </div>
 </div>
 
@@ -107,13 +110,21 @@
                 </thead>
                 <tbody>
                     {% for member in members %}
-                    <tr class="{% if member.refund_status == 'refunded' %}refunded-row{% endif %}">
+                    <tr class="{% if member.refund_status == 'refunded' %}refunded-row{% elif member.transfer_status == 'transferred' %}transferred-row{% elif member.transfer_status == 'received' %}received-row{% endif %}">
                         <td class="sticky-col" rowspan="2">
-                            <a href="{{ url_for('view_member', member_id=member.id) }}" class="text-decoration-none">
+                            <a href="#" class="text-decoration-none member-view-link" data-member-id="{{ member.id }}">
                                 <strong>{{ member.display_name or member.member_name }}</strong>
                             </a>
+                            {% if member.member_type == 'OT회원' %}
+                            {% set ot_session_num = member.ot_session_number or 1 %}
+                            <span class="badge {% if ot_session_num == 1 %}bg-success{% elif ot_session_num == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %} ms-1">OT {{ ot_session_num }}차</span>
+                            {% endif %}
                             {% if member.refund_status == 'refunded' %}
                             <span class="badge bg-danger ms-1">환불</span>
+                            {% elif member.transfer_status == 'transferred' %}
+                            <span class="badge bg-warning text-dark ms-1">인계됨</span>
+                            {% elif member.transfer_status == 'received' %}
+                            <span class="badge bg-info ms-1">인계받음</span>
                             {% endif %}
                         </td>
                         <td class="text-center" rowspan="2">
@@ -170,7 +181,7 @@
                         </td>
                         {% endfor %}
                     </tr>
-                    <tr class="sub-row {% if member.refund_status == 'refunded' %}refunded-row{% endif %}">
+                    <tr class="sub-row {% if member.refund_status == 'refunded' %}refunded-row{% elif member.transfer_status == 'transferred' %}transferred-row{% elif member.transfer_status == 'received' %}received-row{% endif %}">
                         <td class="text-center work-type-cell other-type">그 외</td>
                         <!-- 그 외 (근무외) row -->
                         {% for day in month_days %}
@@ -303,6 +314,21 @@ tr.sub-row {
 .refunded-row td {
     background-color: #f8d7da !important;
 }
+/* Transferred row styles */
+.transferred-row {
+    background-color: #fff3cd !important;
+    opacity: 0.8;
+}
+.transferred-row td {
+    background-color: #fff3cd !important;
+}
+/* Received row styles */
+.received-row {
+    background-color: #cff4fc !important;
+}
+.received-row td {
+    background-color: #cff4fc !important;
+}
 </style>
 
 <!-- Signature Modal -->
@@ -332,7 +358,7 @@ tr.sub-row {
                 <p class="text-muted mb-3">환불할 회원을 선택하세요:</p>
                 <div class="list-group" id="refundMemberList">
                     {% for member in members %}
-                    {% if member.refund_status != 'refunded' %}
+                    {% if member.refund_status != 'refunded' and member.transfer_status != 'transferred' %}
                     <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
                             onclick="confirmRefund('{{ member.id }}', '{{ member.member_name }}')">
                         <span>
@@ -344,6 +370,43 @@ tr.sub-row {
                     {% endif %}
                     {% else %}
                     <div class="text-center text-muted py-3">환불 가능한 회원이 없습니다.</div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Transfer Modal -->
+<div class="modal fade" id="transferModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-info text-white">
+                <h5 class="modal-title"><i class="bi bi-arrow-right-circle"></i> 회원 인계</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted mb-3">인계할 회원을 선택하세요:</p>
+                <div class="list-group" id="transferMemberList">
+                    {% for member in members %}
+                    {% if member.refund_status != 'refunded' and member.transfer_status != 'transferred' %}
+                    <a href="{{ url_for('transfer_member', member_id=member.id) }}"
+                       class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                        <span>
+                            <strong>{{ member.member_name }}</strong>
+                            <small class="text-muted ms-2">{{ member.phone }}</small>
+                        </span>
+                        <span>
+                            <span class="badge bg-secondary">{{ member.sessions }}회</span>
+                            <span class="badge bg-info">{{ "{:,}".format(member.contract_amount) }}원</span>
+                        </span>
+                    </a>
+                    {% endif %}
+                    {% else %}
+                    <div class="text-center text-muted py-3">인계 가능한 회원이 없습니다.</div>
                     {% endfor %}
                 </div>
             </div>
@@ -374,6 +437,172 @@ tr.sub-row {
     </div>
 </div>
 
+<!-- Add Member Modal -->
+<div class="modal fade" id="addMemberModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>새 회원 등록</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form method="POST" action="{{ url_for('add_member') }}" id="addMemberForm">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="add_member_type" class="form-label">회원 유형 *</label>
+                            <select class="form-select" id="add_member_type" name="member_type" required>
+                                <option value="일반회원">일반회원</option>
+                                <option value="OT회원">OT회원</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="add_channel" class="form-label">경로 *</label>
+                            <select class="form-select" id="add_channel" name="channel" required>
+                                <option value="">선택하세요</option>
+                                <option value="WI">WI</option>
+                                <option value="OT">OT</option>
+                                <option value="재등록">재등록</option>
+                                <option value="소개">소개</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="add_member_name" class="form-label">회원명 *</label>
+                            <input type="text" class="form-control" id="add_member_name" name="member_name" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="add_phone" class="form-label">전화번호 *</label>
+                            <input type="tel" class="form-control" id="add_phone" name="phone" placeholder="010-0000-0000" required>
+                        </div>
+                    </div>
+
+                    <!-- Payment fields - hidden for OT members -->
+                    <div class="row mb-3" id="addPaymentFields">
+                        <div class="col-md-4">
+                            <label for="add_payment_method" class="form-label">결제수단 <span class="required-star">*</span></label>
+                            <select class="form-select" id="add_payment_method" name="payment_method" required>
+                                <option value="">선택하세요</option>
+                                <option value="현금">현금</option>
+                                <option value="카드">카드</option>
+                                <option value="계좌이체">계좌이체</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="add_sessions" class="form-label">세션 수 <span class="required-star">*</span></label>
+                            <input type="number" class="form-control" id="add_sessions" name="sessions" min="1" required>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="add_unit_price" class="form-label">단가 (원) <span class="required-star">*</span></label>
+                            <input type="number" class="form-control" id="add_unit_price" name="unit_price" min="0" step="1000" required>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label for="add_age" class="form-label">연령</label>
+                            <input type="number" class="form-control" id="add_age" name="age" min="1" max="120" placeholder="선택사항">
+                        </div>
+                        <div class="col-md-4">
+                            <label for="add_gender" class="form-label">성별</label>
+                            <select class="form-select" id="add_gender" name="gender">
+                                <option value="">선택하세요</option>
+                                <option value="남">남</option>
+                                <option value="여">여</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label for="add_occupation" class="form-label">직업</label>
+                            <input type="text" class="form-control" id="add_occupation" name="occupation" placeholder="선택사항">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label for="add_special_notes" class="form-label">특이사항</label>
+                        <textarea class="form-control" id="add_special_notes" name="special_notes" rows="2" placeholder="선택사항"></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">인바디 기록</label>
+                        <div class="border rounded p-2 bg-light">
+                            <div id="addInbodyPreview" class="d-flex flex-wrap gap-2 mb-2"></div>
+                            <input type="file" id="addInbodyInput" accept="image/*" multiple style="display: none;">
+                            <input type="hidden" id="add_inbody_photos" name="inbody_photos">
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('addInbodyInput').click()">
+                                <i class="bi bi-camera"></i> 사진 추가
+                            </button>
+                            <small class="text-muted ms-2">선택사항 (여러 장 가능)</small>
+                        </div>
+                    </div>
+
+                    {% if user.role in ['main_admin', 'branch_admin'] %}
+                    <div class="mb-3" id="addTrainerField">
+                        <label for="add_trainer_id" class="form-label">담당 트레이너 <span class="required-star">*</span></label>
+                        <select class="form-select" id="add_trainer_id" name="trainer_id" required>
+                            <option value="">선택하세요</option>
+                            {% for trainer in trainers %}
+                            <option value="{{ trainer.id }}">{{ trainer.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label class="form-label">회원 서명 *</label>
+                        <div class="border rounded p-2 bg-light">
+                            <canvas id="addSignatureCanvas" width="600" height="150" class="border bg-white w-100" style="touch-action: none;"></canvas>
+                        </div>
+                        <input type="hidden" id="add_signature" name="signature">
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearAddSignature()">서명 지우기</button>
+                    </div>
+
+                    <div id="addOtNotice" class="alert alert-info mb-3" style="display: none;">
+                        <i class="bi bi-info-circle me-1"></i>
+                        <strong>OT 회원 안내:</strong> OT 회원은 무료이며, 등록 후 지점장이 트레이너에게 배정합니다. 배정 후 7일 이내에 세션을 완료해야 합니다.
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary" onclick="submitAddMemberForm()">
+                    <i class="bi bi-check-circle me-1"></i>회원 등록
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- View Member Modal -->
+<div class="modal fade" id="viewMemberModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-person-lines-fill me-2"></i>회원 상세 정보</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="viewMemberContent">
+                    <div class="text-center py-4">
+                        <div class="spinner-border text-primary" role="status">
+                            <span class="visually-hidden">Loading...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" id="viewMemberFooter" style="display: none;">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
+                <a href="#" id="viewMemberTransferBtn" class="btn btn-info">
+                    <i class="bi bi-arrow-right-circle"></i> 회원 인계
+                </a>
+                <button type="button" id="viewMemberRefundBtn" class="btn btn-warning" onclick="refundFromModal()">
+                    <i class="bi bi-arrow-counterclockwise"></i> 회원 환불
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <script>
 function showSignatureModal(memberName, signatureData) {
     document.getElementById('signatureModalTitle').textContent = memberName + ' 회원 서명';
@@ -381,15 +610,20 @@ function showSignatureModal(memberName, signatureData) {
     new bootstrap.Modal(document.getElementById('signatureModal')).show();
 }
 
+// Track current session detail state for updating after save
+let currentSessionTrigger = null;
+let currentSessionsData = null;
+
 // Event delegation for session detail triggers
 document.addEventListener('click', function(e) {
     const trigger = e.target.closest('.session-detail-trigger');
     if (trigger) {
+        currentSessionTrigger = trigger;
         const memberName = trigger.dataset.member;
         const date = trigger.dataset.date;
         const workType = trigger.dataset.worktype;
-        const sessions = JSON.parse(trigger.dataset.sessions);
-        showSessionDetails(memberName, date, workType, sessions);
+        currentSessionsData = JSON.parse(trigger.dataset.sessions);
+        showSessionDetails(memberName, date, workType, currentSessionsData);
     }
 });
 
@@ -419,7 +653,7 @@ function showSessionDetails(memberName, date, workType, sessions) {
                 <span class="badge bg-dark">${session.start_time.substring(0, 5)} - ${session.end_time.substring(0, 5)}</span>
             </div>
             <div class="row">
-                <div class="col-12">
+                <div class="col-12 mb-2">
                     <small class="text-muted">서명:</small>
                     ${session.session_signature ? `
                         <div class="mt-1 p-2 bg-light rounded text-center">
@@ -429,6 +663,18 @@ function showSessionDetails(memberName, date, workType, sessions) {
                     ` : `
                         <div class="mt-1 text-muted">서명 없음</div>
                     `}
+                </div>
+                <div class="col-12">
+                    <small class="text-muted d-block mb-1">수업 일지:</small>
+                    <div class="input-group input-group-sm">
+                        <textarea class="form-control session-notes-input"
+                                  id="notes_${session.id}"
+                                  rows="2"
+                                  placeholder="수업 내용, 회원 상태, 특이사항 등...">${session.session_notes || ''}</textarea>
+                        <button class="btn btn-outline-primary" type="button" onclick="saveSessionNotes('${session.id}')">
+                            <i class="bi bi-check-lg"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         `;
@@ -442,6 +688,56 @@ function showSessionDetails(memberName, date, workType, sessions) {
     container.appendChild(summary);
 
     new bootstrap.Modal(document.getElementById('sessionDetailModal')).show();
+}
+
+// Save session notes via API
+function saveSessionNotes(scheduleId) {
+    const textarea = document.getElementById('notes_' + scheduleId);
+    const notes = textarea.value;
+    const button = textarea.nextElementSibling;
+    const originalHtml = button.innerHTML;
+
+    button.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    button.disabled = true;
+
+    fetch('/api/schedule/' + scheduleId + '/notes', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ session_notes: notes })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Update local data so reopening modal shows updated notes
+            if (currentSessionsData) {
+                const session = currentSessionsData.find(s => s.id === scheduleId);
+                if (session) {
+                    session.session_notes = notes;
+                }
+                // Update the trigger's data-sessions attribute
+                if (currentSessionTrigger) {
+                    currentSessionTrigger.dataset.sessions = JSON.stringify(currentSessionsData);
+                }
+            }
+
+            button.innerHTML = '<i class="bi bi-check-lg text-success"></i>';
+            setTimeout(() => {
+                button.innerHTML = originalHtml;
+                button.disabled = false;
+            }, 1500);
+        } else {
+            alert('저장 실패: ' + (data.error || '알 수 없는 오류'));
+            button.innerHTML = originalHtml;
+            button.disabled = false;
+        }
+    })
+    .catch(error => {
+        alert('저장 실패: ' + error);
+        button.innerHTML = originalHtml;
+        button.disabled = false;
+    });
 }
 
 // Branch filter - when branch changes, reset trainer and auto-submit to reload trainers
@@ -471,6 +767,538 @@ function confirmRefund(memberId, memberName) {
         document.body.appendChild(form);
         form.submit();
     }
+}
+
+// ===== Add Member Modal Functions =====
+let addSignatureCanvas = null;
+let addSignatureCtx = null;
+let isAddDrawing = false;
+let addLastX = 0;
+let addLastY = 0;
+
+// Initialize Add Member Modal signature
+document.getElementById('addMemberModal').addEventListener('shown.bs.modal', function() {
+    initAddSignatureCanvas();
+});
+
+// Reset form when modal is closed
+document.getElementById('addMemberModal').addEventListener('hidden.bs.modal', function() {
+    document.getElementById('addMemberForm').reset();
+    clearAddSignature();
+    document.getElementById('addOtNotice').style.display = 'none';
+});
+
+function initAddSignatureCanvas() {
+    addSignatureCanvas = document.getElementById('addSignatureCanvas');
+    addSignatureCtx = addSignatureCanvas.getContext('2d');
+
+    addSignatureCtx.strokeStyle = '#000';
+    addSignatureCtx.lineWidth = 2;
+    addSignatureCtx.lineCap = 'round';
+    addSignatureCtx.lineJoin = 'round';
+
+    addSignatureCtx.fillStyle = '#fff';
+    addSignatureCtx.fillRect(0, 0, addSignatureCanvas.width, addSignatureCanvas.height);
+
+    // Remove existing listeners
+    addSignatureCanvas.removeEventListener('mousedown', startAddDrawing);
+    addSignatureCanvas.removeEventListener('mousemove', addDraw);
+    addSignatureCanvas.removeEventListener('mouseup', stopAddDrawing);
+    addSignatureCanvas.removeEventListener('mouseout', stopAddDrawing);
+    addSignatureCanvas.removeEventListener('touchstart', startAddDrawing);
+    addSignatureCanvas.removeEventListener('touchmove', addDraw);
+    addSignatureCanvas.removeEventListener('touchend', stopAddDrawing);
+
+    // Add event listeners
+    addSignatureCanvas.addEventListener('mousedown', startAddDrawing);
+    addSignatureCanvas.addEventListener('mousemove', addDraw);
+    addSignatureCanvas.addEventListener('mouseup', stopAddDrawing);
+    addSignatureCanvas.addEventListener('mouseout', stopAddDrawing);
+    addSignatureCanvas.addEventListener('touchstart', startAddDrawing);
+    addSignatureCanvas.addEventListener('touchmove', addDraw);
+    addSignatureCanvas.addEventListener('touchend', stopAddDrawing);
+}
+
+function getAddPosition(e) {
+    const rect = addSignatureCanvas.getBoundingClientRect();
+    const scaleX = addSignatureCanvas.width / rect.width;
+    const scaleY = addSignatureCanvas.height / rect.height;
+
+    if (e.touches) {
+        return {
+            x: (e.touches[0].clientX - rect.left) * scaleX,
+            y: (e.touches[0].clientY - rect.top) * scaleY
+        };
+    }
+    return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+    };
+}
+
+function startAddDrawing(e) {
+    isAddDrawing = true;
+    const pos = getAddPosition(e);
+    addLastX = pos.x;
+    addLastY = pos.y;
+}
+
+function addDraw(e) {
+    if (!isAddDrawing) return;
+    e.preventDefault();
+
+    const pos = getAddPosition(e);
+    addSignatureCtx.beginPath();
+    addSignatureCtx.moveTo(addLastX, addLastY);
+    addSignatureCtx.lineTo(pos.x, pos.y);
+    addSignatureCtx.stroke();
+
+    addLastX = pos.x;
+    addLastY = pos.y;
+
+    updateAddSignatureData();
+}
+
+function stopAddDrawing() {
+    isAddDrawing = false;
+}
+
+function updateAddSignatureData() {
+    const signatureData = addSignatureCanvas.toDataURL('image/png');
+    document.getElementById('add_signature').value = signatureData;
+}
+
+function clearAddSignature() {
+    if (addSignatureCtx) {
+        addSignatureCtx.fillStyle = '#fff';
+        addSignatureCtx.fillRect(0, 0, addSignatureCanvas.width, addSignatureCanvas.height);
+    }
+    document.getElementById('add_signature').value = '';
+}
+
+// ===== InBody Photo Handling =====
+let addInbodyPhotos = [];
+
+document.getElementById('addInbodyInput').addEventListener('change', function(e) {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            addInbodyPhotos.push({
+                data: event.target.result,
+                name: file.name
+            });
+            updateAddInbodyPreview();
+        };
+        reader.readAsDataURL(file);
+    });
+    e.target.value = ''; // Reset input for same file selection
+});
+
+function updateAddInbodyPreview() {
+    const preview = document.getElementById('addInbodyPreview');
+    preview.innerHTML = addInbodyPhotos.map((photo, index) => `
+        <div class="position-relative" style="width: 80px; height: 80px;">
+            <img src="${photo.data}" class="rounded border" style="width: 100%; height: 100%; object-fit: cover;">
+            <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 p-0"
+                    style="width: 20px; height: 20px; font-size: 10px;" onclick="removeAddInbodyPhoto(${index})">
+                <i class="bi bi-x"></i>
+            </button>
+        </div>
+    `).join('');
+
+    // Update hidden input
+    document.getElementById('add_inbody_photos').value = JSON.stringify(addInbodyPhotos.map(p => p.data));
+}
+
+function removeAddInbodyPhoto(index) {
+    addInbodyPhotos.splice(index, 1);
+    updateAddInbodyPreview();
+}
+
+function clearAddInbodyPhotos() {
+    addInbodyPhotos = [];
+    document.getElementById('addInbodyPreview').innerHTML = '';
+    document.getElementById('add_inbody_photos').value = '';
+}
+
+// Reset InBody photos when modal is closed
+document.getElementById('addMemberModal').addEventListener('hidden.bs.modal', function() {
+    clearAddInbodyPhotos();
+});
+
+// Show/hide OT notice and payment fields in Add Member Modal
+document.getElementById('add_member_type').addEventListener('change', function() {
+    const otNotice = document.getElementById('addOtNotice');
+    const paymentFields = document.getElementById('addPaymentFields');
+    const paymentMethod = document.getElementById('add_payment_method');
+    const sessions = document.getElementById('add_sessions');
+    const unitPrice = document.getElementById('add_unit_price');
+    const trainerField = document.getElementById('addTrainerField');
+    const trainerId = document.getElementById('add_trainer_id');
+
+    if (this.value === 'OT회원') {
+        otNotice.style.display = 'block';
+        paymentFields.style.display = 'none';
+        // Hide trainer dropdown for OT (goes to pool)
+        if (trainerField) {
+            trainerField.style.display = 'none';
+            if (trainerId) trainerId.removeAttribute('required');
+        }
+        // Remove required and set default values for OT
+        paymentMethod.removeAttribute('required');
+        sessions.removeAttribute('required');
+        unitPrice.removeAttribute('required');
+        paymentMethod.value = '';
+        sessions.value = '1';
+        unitPrice.value = '0';
+    } else {
+        otNotice.style.display = 'none';
+        paymentFields.style.display = 'flex';
+        // Show trainer dropdown for regular members
+        if (trainerField) {
+            trainerField.style.display = 'block';
+            if (trainerId) trainerId.setAttribute('required', 'required');
+        }
+        // Restore required for regular members
+        paymentMethod.setAttribute('required', 'required');
+        sessions.setAttribute('required', 'required');
+        unitPrice.setAttribute('required', 'required');
+    }
+});
+
+function submitAddMemberForm() {
+    const signatureData = document.getElementById('add_signature').value;
+    if (!signatureData) {
+        alert('회원 서명을 입력해주세요.');
+        return;
+    }
+
+    const form = document.getElementById('addMemberForm');
+    if (form.checkValidity()) {
+        form.submit();
+    } else {
+        form.reportValidity();
+    }
+}
+
+// ===== View Member Modal Functions =====
+let currentViewMemberId = null;
+const userRole = '{{ user.role }}';
+
+// Event delegation for member view links
+document.addEventListener('click', function(e) {
+    const viewLink = e.target.closest('.member-view-link');
+    if (viewLink) {
+        e.preventDefault();
+        const memberId = viewLink.dataset.memberId;
+        openViewMemberModal(memberId);
+    }
+});
+
+function openViewMemberModal(memberId) {
+    currentViewMemberId = memberId;
+
+    // Reset modal content
+    document.getElementById('viewMemberContent').innerHTML = `
+        <div class="text-center py-4">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    `;
+    document.getElementById('viewMemberFooter').style.display = 'none';
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('viewMemberModal'));
+    modal.show();
+
+    // Fetch member details
+    fetch(`/api/member/${memberId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                renderMemberDetails(data.member);
+            } else {
+                document.getElementById('viewMemberContent').innerHTML = `
+                    <div class="alert alert-danger">회원 정보를 불러올 수 없습니다.</div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            document.getElementById('viewMemberContent').innerHTML = `
+                <div class="alert alert-danger">회원 정보를 불러올 수 없습니다.</div>
+            `;
+        });
+}
+
+function renderMemberDetails(member) {
+    const content = document.getElementById('viewMemberContent');
+
+    // Format numbers
+    const unitPrice = parseInt(member.unit_price).toLocaleString();
+    const totalAmount = (member.sessions * member.unit_price).toLocaleString();
+
+    // Build status badge
+    let statusBadge = '';
+    let statusDetails = '';
+    if (member.refund_status === 'refunded') {
+        statusBadge = '<span class="badge bg-danger">환불 처리됨</span>';
+        if (member.refund_amount && member.refund_amount > 0) {
+            statusDetails = `<br><small class="text-muted">차감액: ${parseInt(member.refund_amount).toLocaleString()}원</small>`;
+        }
+    } else if (member.transfer_status === 'transferred') {
+        statusBadge = '<span class="badge bg-warning text-dark">인계됨</span>';
+    } else if (member.transfer_status === 'received') {
+        statusBadge = '<span class="badge bg-info">인계받음</span>';
+    } else {
+        statusBadge = '<span class="badge bg-success">정상</span>';
+    }
+
+    // Build channel badge
+    let channelClass = 'bg-info';
+    if (member.channel === 'WI') channelClass = 'bg-primary';
+    else if (member.channel === 'OT') channelClass = 'bg-success';
+    else if (member.channel === '재등록') channelClass = 'bg-warning text-dark';
+
+    // Build member type badge
+    let memberTypeBadge = '';
+    if (member.member_type === 'OT회원') {
+        const sessionNum = member.ot_session_number || 1;
+        let otBadgeClass = sessionNum === 1 ? 'bg-success' : sessionNum === 2 ? 'bg-primary' : 'bg-warning text-dark';
+        memberTypeBadge = `<span class="badge ${otBadgeClass} ms-1">OT ${sessionNum}차</span>`;
+    }
+
+    // Build OT status section if OT member
+    let otSection = '';
+    if (member.member_type === 'OT회원') {
+        let otStatusBadge = '';
+        if (member.ot_status === 'unassigned') otStatusBadge = '<span class="badge bg-secondary">미배정</span>';
+        else if (member.ot_status === 'assigned') otStatusBadge = '<span class="badge bg-primary">배정됨</span>';
+        else if (member.ot_status === 'completed') otStatusBadge = '<span class="badge bg-success">완료</span>';
+        else if (member.ot_status === 'returned') otStatusBadge = '<span class="badge bg-warning text-dark">반환됨</span>';
+
+        let deadlineInfo = '';
+        if (member.ot_deadline) {
+            const deadline = new Date(member.ot_deadline);
+            deadlineInfo = `<tr><th class="bg-light">OT 기한</th><td>${deadline.toLocaleDateString('ko-KR')}</td></tr>`;
+        }
+
+        otSection = `
+            <tr><th class="bg-light">OT 상태</th><td>${otStatusBadge}</td></tr>
+            ${deadlineInfo}
+        `;
+    }
+
+    // Build additional fields section
+    let additionalFields = '';
+    if (member.age) {
+        additionalFields += `<tr><th class="bg-light">연령</th><td>${member.age}세</td></tr>`;
+    }
+    if (member.gender) {
+        additionalFields += `<tr><th class="bg-light">성별</th><td>${member.gender}</td></tr>`;
+    }
+    if (member.occupation) {
+        additionalFields += `<tr><th class="bg-light">직업</th><td>${member.occupation}</td></tr>`;
+    }
+    if (member.special_notes) {
+        additionalFields += `<tr><th class="bg-light">특이사항</th><td>${member.special_notes}</td></tr>`;
+    }
+
+    content.innerHTML = `
+        <table class="table table-bordered mb-3">
+            <tr>
+                <th class="bg-light" style="width: 30%;">회원명</th>
+                <td>${member.member_name} ${memberTypeBadge}</td>
+            </tr>
+            <tr>
+                <th class="bg-light">전화번호</th>
+                <td>${member.phone}</td>
+            </tr>
+            <tr>
+                <th class="bg-light">회원 유형</th>
+                <td>${member.member_type || '일반회원'}</td>
+            </tr>
+            <tr>
+                <th class="bg-light">결제수단</th>
+                <td>${member.payment_method}</td>
+            </tr>
+            <tr>
+                <th class="bg-light">세션 수</th>
+                <td>${member.sessions}회 <small class="text-muted">(완료: ${member.completed_sessions || 0}회)</small></td>
+            </tr>
+            <tr>
+                <th class="bg-light">단가</th>
+                <td>${unitPrice}원</td>
+            </tr>
+            <tr>
+                <th class="bg-light">총 금액</th>
+                <td><strong>${totalAmount}원</strong></td>
+            </tr>
+            <tr>
+                <th class="bg-light">경로</th>
+                <td><span class="badge ${channelClass}">${member.channel}</span></td>
+            </tr>
+            <tr>
+                <th class="bg-light">담당 트레이너</th>
+                <td>${member.trainer_name || '-'}</td>
+            </tr>
+            <tr>
+                <th class="bg-light">등록일</th>
+                <td>${member.created_at ? member.created_at.substring(0, 10) : '-'}</td>
+            </tr>
+            <tr>
+                <th class="bg-light">상태</th>
+                <td>${statusBadge}${statusDetails}</td>
+            </tr>
+            ${otSection}
+            ${additionalFields}
+        </table>
+
+        ${member.signature ? `
+        <div class="mt-3">
+            <h6>회원 서명</h6>
+            <div class="border rounded p-3 bg-light text-center">
+                <img src="${member.signature}" alt="회원 서명" class="img-fluid" style="max-height: 120px;">
+            </div>
+        </div>
+        ` : ''}
+
+        <div class="mt-3">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">인바디 기록</h6>
+                <div>
+                    <input type="file" id="viewInbodyInput" accept="image/*" multiple style="display: none;">
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('viewInbodyInput').click()">
+                        <i class="bi bi-camera"></i> 사진 추가
+                    </button>
+                </div>
+            </div>
+            <div id="viewInbodyPhotos" class="d-flex flex-wrap gap-2">
+                ${renderInbodyPhotos(member.inbody_photos, member.id)}
+            </div>
+        </div>
+    `;
+
+    // Show/hide footer buttons based on member status
+    const footer = document.getElementById('viewMemberFooter');
+    const transferBtn = document.getElementById('viewMemberTransferBtn');
+    const refundBtn = document.getElementById('viewMemberRefundBtn');
+
+    if (member.refund_status === 'refunded' || member.transfer_status === 'transferred') {
+        footer.style.display = 'flex';
+        transferBtn.style.display = 'none';
+        refundBtn.style.display = 'none';
+    } else {
+        footer.style.display = 'flex';
+        transferBtn.style.display = 'inline-block';
+        transferBtn.href = `/members/${member.id}/transfer`;
+        refundBtn.style.display = 'inline-block';
+    }
+}
+
+function refundFromModal() {
+    if (!currentViewMemberId) return;
+
+    // Close the modal first
+    const modal = bootstrap.Modal.getInstance(document.getElementById('viewMemberModal'));
+    if (modal) modal.hide();
+
+    // Confirm refund
+    if (confirm('정말 이 회원을 환불 처리하시겠습니까?\n\n환불 처리 시:\n- 해당 회원의 계약금액이 매출에서 제외됩니다.\n- 이전 달 등록 회원인 경우, 인센티브 차액이 이번 달 급여에서 차감됩니다.\n- 수업료(완료된 수업)는 유지됩니다.')) {
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = `/members/${currentViewMemberId}/refund`;
+        document.body.appendChild(form);
+        form.submit();
+    }
+}
+
+// ===== InBody Photo Functions for View Modal =====
+function renderInbodyPhotos(photos, memberId) {
+    if (!photos || photos.length === 0) {
+        return '<p class="text-muted small mb-0">등록된 인바디 사진이 없습니다.</p>';
+    }
+
+    return photos.map((photo, index) => `
+        <div class="position-relative" style="width: 100px; height: 100px; cursor: pointer;">
+            <img src="${photo}" class="rounded border" style="width: 100%; height: 100%; object-fit: cover;"
+                 onclick="openInbodyFullscreen('${photo.replace(/'/g, "\\'")}')">
+            <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 p-0"
+                    style="width: 20px; height: 20px; font-size: 10px;"
+                    onclick="event.stopPropagation(); deleteInbodyPhoto('${memberId}', ${index})">
+                <i class="bi bi-x"></i>
+            </button>
+        </div>
+    `).join('');
+}
+
+function openInbodyFullscreen(photoUrl) {
+    const modal = document.createElement('div');
+    modal.className = 'position-fixed top-0 start-0 w-100 h-100 d-flex align-items-center justify-content-center';
+    modal.style.cssText = 'z-index: 9999; background: rgba(0,0,0,0.9);';
+    modal.onclick = () => modal.remove();
+    modal.innerHTML = `<img src="${photoUrl}" style="max-width: 90%; max-height: 90%; object-fit: contain;">`;
+    document.body.appendChild(modal);
+}
+
+// Event listener for adding photos in view modal
+document.addEventListener('change', function(e) {
+    if (e.target && e.target.id === 'viewInbodyInput') {
+        const files = Array.from(e.target.files);
+        if (!currentViewMemberId || files.length === 0) return;
+
+        files.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                uploadInbodyPhoto(currentViewMemberId, event.target.result);
+            };
+            reader.readAsDataURL(file);
+        });
+        e.target.value = '';
+    }
+});
+
+function uploadInbodyPhoto(memberId, photoData) {
+    fetch(`/api/member/${memberId}/inbody`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ photo: photoData })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Refresh the photos section
+            document.getElementById('viewInbodyPhotos').innerHTML = renderInbodyPhotos(data.photos, memberId);
+        } else {
+            alert('사진 업로드 실패: ' + (data.error || '알 수 없는 오류'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('사진 업로드 중 오류가 발생했습니다.');
+    });
+}
+
+function deleteInbodyPhoto(memberId, photoIndex) {
+    if (!confirm('이 사진을 삭제하시겠습니까?')) return;
+
+    fetch(`/api/member/${memberId}/inbody/${photoIndex}`, {
+        method: 'DELETE'
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            document.getElementById('viewInbodyPhotos').innerHTML = renderInbodyPhotos(data.photos, memberId);
+        } else {
+            alert('사진 삭제 실패: ' + (data.error || '알 수 없는 오류'));
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('사진 삭제 중 오류가 발생했습니다.');
+    });
 }
 </script>
 {% endblock %}

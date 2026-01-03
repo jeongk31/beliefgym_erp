@@ -39,35 +39,10 @@
     max-width: 400px;
     margin: 0 auto;
 }
-.tier-input {
-    width: 80px;
-    text-align: right;
-    font-size: 0.7rem;
-    padding: 0.15rem 0.3rem;
-}
-.tier-input-small {
-    width: 50px;
-    text-align: right;
-    font-size: 0.7rem;
-    padding: 0.15rem 0.3rem;
-}
 </style>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>급여 관리</h2>
-    {% if user.role == 'main_admin' %}
-    <div>
-        <button type="button" class="btn btn-outline-primary btn-sm" id="editTiersBtn" onclick="toggleEditMode()">
-            <i class="bi bi-pencil"></i> 수정
-        </button>
-        <button type="button" class="btn btn-primary btn-sm d-none" id="saveTiersBtn" onclick="saveTiers()">
-            <i class="bi bi-save"></i> 저장
-        </button>
-        <button type="button" class="btn btn-secondary btn-sm d-none" id="cancelTiersBtn" onclick="cancelEdit()">
-            취소
-        </button>
-    </div>
-    {% endif %}
 </div>
 
 <!-- Filters -->
@@ -139,54 +114,53 @@ function filterByBranch() {
     {% set my_six_month = none %}
 {% endif %}
 
-<!-- 트레이너 인센티브 and 진급조건 side by side -->
-{% set tiers = salary_settings.incentive_tiers|reverse|list %}
+<!-- Row 1: 수업당 인센 + 진급조건 + 수업료 (근무외) -->
+{% set my_class_count = selected_trainer.class_count if selected_trainer else (trainers[0].class_count if trainers else 0) %}
 <div class="row mb-2">
-    <!-- Incentive Tier Table -->
-    <div class="col-md-9">
+    <!-- 수업당 인센 Table -->
+    <div class="col-md-5">
         <div class="card h-100 tier-card">
             <div class="card-header">
-                <h6 class="mb-0">트레이너 인센티브</h6>
+                <h6 class="mb-0">수업당 인센</h6>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
-                    <table class="table table-bordered table-sm mb-0 text-center tier-table" id="incentiveTable">
+                    <table class="table table-bordered table-sm mb-0 text-center tier-table" id="classIncentiveTable">
                         <thead>
                             <tr class="table-secondary">
-                                <th style="min-width: 50px;">매출</th>
-                                <th><span class="tier-threshold" data-tier="0">{{ "{:,}".format(tiers[0][0]) }}</span> 미만</th>
-                                {% for tier in tiers %}
-                                <th><span class="tier-threshold" data-tier="{{ loop.index }}">{{ "{:,}".format(tier[0]) }}</span></th>
-                                {% endfor %}
+                                <th>수업 수</th>
+                                <th>30개 이상</th>
+                                <th>50개 이상</th>
+                                <th>70개 이상</th>
+                                <th>100개 이상</th>
                             </tr>
                         </thead>
                         <tbody>
                             <tr>
                                 <td class="table-secondary fw-bold">인센</td>
-                                {% set avg_sales = (my_six_month / 6)|int if my_six_month is not none else none %}
-                                {% if my_sales is not none %}
-                                <td class="{% if my_sales < tiers[0][0] %}table-success fw-bold{% endif %}"><span class="tier-incentive" data-tier="0">₩0</span></td>
-                                {% for tier in tiers %}
-                                {% set next_threshold = tiers[loop.index][0] if loop.index < tiers|length else 999999999 %}
-                                <td class="{% if my_sales >= tier[0] and my_sales < next_threshold %}table-success fw-bold{% endif %}"><span class="tier-incentive" data-tier="{{ loop.index }}">₩{{ "{:,}".format(tier[1]) }}</span></td>
-                                {% endfor %}
+                                {% if my_sales is not none and my_class_count is not none %}
+                                    {% set class_incentive_eligible = my_sales > 3000000 %}
+                                    <td class="{% if class_incentive_eligible and my_class_count >= 30 and my_class_count < 50 %}table-success fw-bold{% endif %}">₩400,000</td>
+                                    <td class="{% if class_incentive_eligible and my_class_count >= 50 and my_class_count < 70 %}table-success fw-bold{% endif %}">₩600,000</td>
+                                    <td class="{% if class_incentive_eligible and my_class_count >= 70 and my_class_count < 100 %}table-success fw-bold{% endif %}">₩800,000</td>
+                                    <td class="{% if class_incentive_eligible and my_class_count >= 100 %}table-success fw-bold{% endif %}">₩1,000,000</td>
                                 {% else %}
-                                <td><span class="tier-incentive" data-tier="0">₩0</span></td>
-                                {% for tier in tiers %}
-                                <td><span class="tier-incentive" data-tier="{{ loop.index }}">₩{{ "{:,}".format(tier[1]) }}</span></td>
-                                {% endfor %}
+                                    <td>₩400,000</td>
+                                    <td>₩600,000</td>
+                                    <td>₩800,000</td>
+                                    <td>₩1,000,000</td>
                                 {% endif %}
                             </tr>
                         </tbody>
                     </table>
                 </div>
-                <small class="text-muted mt-2 d-block">* 매출 = 해당 월에 등록된 회원들의 총 계약금액 (세션 수 x 단가)</small>
+                <small class="text-muted mt-2 d-block">* 매출 300만원 이하 일시 수업 갯수 인센 적용 안됨</small>
             </div>
         </div>
     </div>
 
     <!-- Master Trainer Tier Table -->
-    <div class="col-md-3">
+    <div class="col-md-4">
         <div class="card h-100 tier-card">
             <div class="card-header">
                 <h6 class="mb-0">진급 조건 (Master Trainer)</h6>
@@ -216,51 +190,7 @@ function filterByBranch() {
             </div>
         </div>
     </div>
-</div>
 
-<!-- 수업료 Tier Tables -->
-{% set lesson_tiers = salary_settings.lesson_fee_tiers|reverse|list %}
-<div class="row mb-3">
-    <!-- 수업료 근무내 -->
-    <div class="col-md-9">
-        <div class="card h-100 tier-card">
-            <div class="card-header">
-                <h6 class="mb-0">수업료 (근무내)</h6>
-            </div>
-            <div class="card-body">
-                <div class="table-responsive">
-                    <table class="table table-bordered table-sm mb-0 text-center tier-table" id="lessonFeeTable">
-                        <thead>
-                            <tr class="table-secondary">
-                                <th style="min-width: 50px;">매출</th>
-                                <th><span class="lesson-threshold" data-tier="0">{{ "{:,}".format(lesson_tiers[0][0]) }}</span> 미만</th>
-                                {% for tier in lesson_tiers %}
-                                <th><span class="lesson-threshold" data-tier="{{ loop.index }}">{{ "{:,}".format(tier[0]) }}</span></th>
-                                {% endfor %}
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td class="table-secondary fw-bold">%</td>
-                                {% if my_sales is not none %}
-                                <td class="{% if my_sales < lesson_tiers[0][0] %}table-success fw-bold{% endif %}"><span class="lesson-rate" data-tier="0">10%</span></td>
-                                {% for tier in lesson_tiers %}
-                                {% set next_threshold = lesson_tiers[loop.index][0] if loop.index < lesson_tiers|length else 999999999 %}
-                                <td class="{% if my_sales >= tier[0] and my_sales < next_threshold %}table-success fw-bold{% endif %}"><span class="lesson-rate" data-tier="{{ loop.index }}">{{ tier[1] }}%</span></td>
-                                {% endfor %}
-                                {% else %}
-                                <td><span class="lesson-rate" data-tier="0">10%</span></td>
-                                {% for tier in lesson_tiers %}
-                                <td><span class="lesson-rate" data-tier="{{ loop.index }}">{{ tier[1] }}%</span></td>
-                                {% endfor %}
-                                {% endif %}
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-    </div>
     <!-- 수업료 근무외 -->
     <div class="col-md-3">
         <div class="card h-100 tier-card">
@@ -287,6 +217,131 @@ function filterByBranch() {
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Row 2: 트레이너 인센티브 -->
+<div class="row mb-2">
+    <div class="col-12">
+        <div class="card h-100 tier-card">
+            <div class="card-header">
+                <h6 class="mb-0">트레이너 인센티브</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm mb-0 text-center tier-table" id="incentiveTable">
+                        <thead>
+                            <tr class="table-secondary">
+                                <th style="min-width: 50px;">매출</th>
+                                <th>450만 미만</th>
+                                <th>450만 이상</th>
+                                <th>650만 이상</th>
+                                <th>800만 이상</th>
+                                <th>1,000만 이상</th>
+                                <th>1,200만 이상</th>
+                                <th>1,500만 이상</th>
+                                <th>2,000만 이상</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="table-secondary fw-bold">인센</td>
+                                {% if my_sales is not none %}
+                                    <td class="{% if my_sales < 4500000 %}table-success fw-bold{% endif %}">₩0</td>
+                                    <td class="{% if my_sales >= 4500000 and my_sales < 6500000 %}table-success fw-bold{% endif %}">₩225,000</td>
+                                    <td class="{% if my_sales >= 6500000 and my_sales < 8000000 %}table-success fw-bold{% endif %}">₩520,000</td>
+                                    <td class="{% if my_sales >= 8000000 and my_sales < 10000000 %}table-success fw-bold{% endif %}">₩880,000</td>
+                                    <td class="{% if my_sales >= 10000000 and my_sales < 12000000 %}table-success fw-bold{% endif %}">₩1,400,000</td>
+                                    <td class="{% if my_sales >= 12000000 and my_sales < 15000000 %}table-success fw-bold{% endif %}">매출 17%</td>
+                                    <td class="{% if my_sales >= 15000000 and my_sales < 20000000 %}table-success fw-bold{% endif %}">17% + ₩500,000</td>
+                                    <td class="{% if my_sales >= 20000000 %}table-success fw-bold{% endif %}">17% + ₩1,000,000</td>
+                                {% else %}
+                                    <td>₩0</td>
+                                    <td>₩225,000</td>
+                                    <td>₩520,000</td>
+                                    <td>₩880,000</td>
+                                    <td>₩1,400,000</td>
+                                    <td>매출 17%</td>
+                                    <td>17% + ₩500,000</td>
+                                    <td>17% + ₩1,000,000</td>
+                                {% endif %}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <small class="text-muted mt-2 d-block">* 매출 = 해당 월에 등록된 회원들의 총 계약금액 (세션 수 x 단가)</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Row 3: 수업료 근무내 -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card h-100 tier-card">
+            <div class="card-header">
+                <h6 class="mb-0">수업료 (근무내)</h6>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered table-sm mb-0 text-center tier-table" id="lessonFeeTable">
+                        <thead>
+                            <tr class="table-secondary">
+                                <th style="min-width: 50px;">매출</th>
+                                <th>300만 미만</th>
+                                <th>300만 이상</th>
+                                <th>450만 이상</th>
+                                <th>650만 이상</th>
+                                <th>800만 이상</th>
+                                <th>1,000만 이상</th>
+                                <th>1,200만 이상</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td class="table-secondary fw-bold">%</td>
+                                {% if my_sales is not none %}
+                                    <td class="{% if my_sales < 3000000 %}table-success fw-bold{% endif %}">10%</td>
+                                    <td class="{% if my_sales >= 3000000 and my_sales < 4500000 %}table-success fw-bold{% endif %}">30%</td>
+                                    <td class="{% if my_sales >= 4500000 and my_sales < 6500000 %}table-success fw-bold{% endif %}">31%</td>
+                                    <td class="{% if my_sales >= 6500000 and my_sales < 8000000 %}table-success fw-bold{% endif %}">32%</td>
+                                    <td class="{% if my_sales >= 8000000 and my_sales < 10000000 %}table-success fw-bold{% endif %}">33%</td>
+                                    <td class="{% if my_sales >= 10000000 and my_sales < 12000000 %}table-success fw-bold{% endif %}">34%</td>
+                                    <td class="{% if my_sales >= 12000000 %}table-success fw-bold{% endif %}">35%</td>
+                                {% else %}
+                                    <td>10%</td>
+                                    <td>30%</td>
+                                    <td>31%</td>
+                                    <td>32%</td>
+                                    <td>33%</td>
+                                    <td>34%</td>
+                                    <td>35%</td>
+                                {% endif %}
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Row 4: OT 인센티브 -->
+<div class="row mb-3">
+    <div class="col-12">
+        <div class="card h-100 tier-card">
+            <div class="card-header">
+                <h6 class="mb-0">OT 인센티브</h6>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info py-2 mb-0">
+                    <i class="bi bi-info-circle me-1"></i>
+                    <strong>OT 10개 이상부터 1개당 5,000원</strong>
+                    <br>
+                    <small class="text-muted">해당 월에 완료한 OT 회원 수업이 10개를 초과하면 1개당 5,000원의 인센티브가 지급됩니다.</small>
                 </div>
             </div>
         </div>
@@ -320,6 +375,10 @@ function filterByBranch() {
                     <td class="{% if trainer.incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.incentive) }}</td>
                 </tr>
                 <tr>
+                    <td class="bg-light fw-bold">수업당 인센</td>
+                    <td class="{% if trainer.class_incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.class_incentive) }}</td>
+                </tr>
+                <tr>
                     <td class="bg-light fw-bold">Master Trainer 보너스 <small class="text-muted">(6개월 평균: ₩{{ "{:,}".format((trainer.six_month_sales / 6)|int) }})</small></td>
                     <td class="{% if trainer.master_bonus > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.master_bonus) }}</td>
                 </tr>
@@ -330,6 +389,10 @@ function filterByBranch() {
                 <tr>
                     <td class="bg-light fw-bold">수업료 (근무외) <small class="text-muted">{{ trainer.lesson_fee_rate_other }}%</small></td>
                     <td class="{% if trainer.lesson_fee_other > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.lesson_fee_other) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">OT 인센티브 <small class="text-muted">({{ trainer.ot_session_count|default(0) }}개 완료{% if trainer.ot_session_count|default(0) < 10 %}, 10개 이상 시 지급{% endif %})</small></td>
+                    <td class="{% if trainer.ot_incentive and trainer.ot_incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.ot_incentive|default(0)) }}</td>
                 </tr>
                 {% if trainer.refund_deduction and trainer.refund_deduction > 0 %}
                 <tr>
@@ -343,6 +406,12 @@ function filterByBranch() {
                     <td class="text-danger fw-bold">-₩{{ "{:,}".format(trainer.dayoff_deduction) }}</td>
                 </tr>
                 {% endif %}
+                {% for adj in trainer.adjustments %}
+                <tr>
+                    <td class="bg-light fw-bold {{ 'text-danger' if adj.amount < 0 else 'text-success' }}">{{ adj.memo }}</td>
+                    <td class="{{ 'text-danger' if adj.amount < 0 else 'text-success' }} fw-bold">{{ '-' if adj.amount < 0 else '' }}₩{{ "{:,}".format(adj.amount|abs) }}</td>
+                </tr>
+                {% endfor %}
             </tbody>
             <tfoot>
                 <tr class="table-secondary">
@@ -376,10 +445,15 @@ function filterByBranch() {
             <span class="fw-bold text-primary">{{ selected_trainer.name }} - {{ selected_month }} 이번 달 매출</span>
             <span class="fw-bold text-primary fs-6">₩{{ "{:,}".format(selected_trainer.sales) }}</span>
         </div>
-        <div class="d-flex justify-content-end mt-2">
+        <div class="d-flex justify-content-end mt-2 gap-2">
             <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#dayoffModal">
                 <i class="bi bi-calendar-x"></i> 휴무일 수정
             </button>
+            {% if user.role == 'main_admin' %}
+            <button type="button" class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#adjustmentModal">
+                <i class="bi bi-plus-circle"></i> 급여 조정
+            </button>
+            {% endif %}
         </div>
     </div>
 </div>
@@ -397,6 +471,10 @@ function filterByBranch() {
                     <td class="{% if selected_trainer.incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.incentive) }}</td>
                 </tr>
                 <tr>
+                    <td class="bg-light fw-bold">수업당 인센</td>
+                    <td class="{% if selected_trainer.class_incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.class_incentive) }}</td>
+                </tr>
+                <tr>
                     <td class="bg-light fw-bold">Master Trainer 보너스 <small class="text-muted">(6개월 평균: ₩{{ "{:,}".format((selected_trainer.six_month_sales / 6)|int) }})</small></td>
                     <td class="{% if selected_trainer.master_bonus > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.master_bonus) }}</td>
                 </tr>
@@ -407,6 +485,10 @@ function filterByBranch() {
                 <tr>
                     <td class="bg-light fw-bold">수업료 (근무외) <small class="text-muted">{{ selected_trainer.lesson_fee_rate_other }}%</small></td>
                     <td class="{% if selected_trainer.lesson_fee_other > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.lesson_fee_other) }}</td>
+                </tr>
+                <tr>
+                    <td class="bg-light fw-bold">OT 인센티브 <small class="text-muted">({{ selected_trainer.ot_session_count|default(0) }}개 완료{% if selected_trainer.ot_session_count|default(0) < 10 %}, 10개 이상 시 지급{% endif %})</small></td>
+                    <td class="{% if selected_trainer.ot_incentive and selected_trainer.ot_incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.ot_incentive|default(0)) }}</td>
                 </tr>
                 {% if selected_trainer.refund_deduction and selected_trainer.refund_deduction > 0 %}
                 <tr>
@@ -420,6 +502,19 @@ function filterByBranch() {
                     <td class="text-danger fw-bold">-₩{{ "{:,}".format(selected_trainer.dayoff_deduction) }}</td>
                 </tr>
                 {% endif %}
+                {% for adj in selected_trainer.adjustments %}
+                <tr>
+                    <td class="bg-light fw-bold {{ 'text-danger' if adj.amount < 0 else 'text-success' }}">
+                        {{ adj.memo }}
+                        {% if user.role == 'main_admin' %}
+                        <button type="button" class="btn btn-link btn-sm p-0 ms-1 text-danger" onclick="deleteAdjustment('{{ adj.id }}')" title="삭제">
+                            <i class="bi bi-x-circle"></i>
+                        </button>
+                        {% endif %}
+                    </td>
+                    <td class="{{ 'text-danger' if adj.amount < 0 else 'text-success' }} fw-bold">{{ '-' if adj.amount < 0 else '' }}₩{{ "{:,}".format(adj.amount|abs) }}</td>
+                </tr>
+                {% endfor %}
             </tbody>
             <tfoot>
                 <tr class="table-secondary">
@@ -475,6 +570,41 @@ function filterByBranch() {
     </div>
 </div>
 
+{% if user.role == 'main_admin' %}
+<!-- 급여 조정 Modal -->
+<div class="modal fade" id="adjustmentModal" tabindex="-1" aria-labelledby="adjustmentModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="adjustmentModalLabel">급여 조정 추가</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-2">{{ selected_trainer.name }} - {{ selected_month }}</p>
+                <div class="mb-3">
+                    <label class="form-label">금액</label>
+                    <div class="input-group">
+                        <input type="number" class="form-control" id="adjustmentAmount" placeholder="양수: 추가, 음수: 차감">
+                        <span class="input-group-text">원</span>
+                    </div>
+                    <small class="text-muted">예: 보너스 100000, 차감 -50000</small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">메모 (사유)</label>
+                    <input type="text" class="form-control" id="adjustmentMemo" placeholder="예: 특별 보너스, 지각 차감 등">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary btn-sm" id="saveAdjustmentBtn" onclick="saveAdjustment()">
+                    <i class="bi bi-save"></i> 저장
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <script>
 // Preview dayoff deduction as user types
 document.getElementById('dayoffInput').addEventListener('input', function() {
@@ -520,6 +650,82 @@ function saveDayoff() {
         btn.innerHTML = '<i class="bi bi-save"></i> 저장';
     });
 }
+
+{% if user.role == 'main_admin' %}
+function saveAdjustment() {
+    const trainerId = '{{ selected_trainer.id }}';
+    const month = '{{ selected_month }}';
+    const amount = parseInt(document.getElementById('adjustmentAmount').value) || 0;
+    const memo = document.getElementById('adjustmentMemo').value.trim();
+    const btn = document.getElementById('saveAdjustmentBtn');
+
+    if (amount === 0) {
+        alert('금액을 입력해주세요.');
+        return;
+    }
+    if (!memo) {
+        alert('메모를 입력해주세요.');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch('/salary/adjustment/add', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            trainer_id: trainerId,
+            month: month,
+            amount: amount,
+            memo: memo
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('오류: ' + data.error);
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-save"></i> 저장';
+        }
+    })
+    .catch(error => {
+        alert('저장 중 오류가 발생했습니다.');
+        console.error(error);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save"></i> 저장';
+    });
+}
+
+function deleteAdjustment(adjustmentId) {
+    if (!confirm('이 조정 항목을 삭제하시겠습니까?')) {
+        return;
+    }
+
+    fetch('/salary/adjustment/delete/' + adjustmentId, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('오류: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('삭제 중 오류가 발생했습니다.');
+        console.error(error);
+    });
+}
+{% endif %}
 </script>
 {% else %}
 <!-- Prompt to select trainer -->
@@ -535,179 +741,6 @@ function saveDayoff() {
     </div>
 </div>
 {% endif %}
-{% endif %}
-
-{% if user.role == 'main_admin' %}
-<script>
-let isEditMode = false;
-let originalValues = {};
-
-function toggleEditMode() {
-    isEditMode = true;
-    document.getElementById('editTiersBtn').classList.add('d-none');
-    document.getElementById('saveTiersBtn').classList.remove('d-none');
-    document.getElementById('cancelTiersBtn').classList.remove('d-none');
-
-    // Store original values and convert to inputs
-    // Incentive thresholds
-    document.querySelectorAll('.tier-threshold').forEach((el, i) => {
-        const value = parseInt(el.textContent.replace(/,/g, ''));
-        originalValues['threshold_' + i] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input" value="${value}" data-type="threshold" data-tier="${i}">`;
-    });
-
-    // Incentive values
-    document.querySelectorAll('.tier-incentive').forEach((el, i) => {
-        const value = parseInt(el.textContent.replace(/[₩,]/g, ''));
-        originalValues['incentive_' + i] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input" value="${value}" data-type="incentive" data-tier="${i}">`;
-    });
-
-    // Master threshold (both rows)
-    document.querySelectorAll('.master-threshold').forEach((el, i) => {
-        const value = parseInt(el.textContent.replace(/,/g, ''));
-        originalValues['master_threshold'] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input" value="${value}" data-type="master_threshold" data-index="${i}" style="width:70px;">`;
-    });
-
-    // Master bonus
-    document.querySelectorAll('.master-bonus').forEach((el, i) => {
-        const value = parseInt(el.textContent.replace(/[₩,]/g, ''));
-        originalValues['master_bonus_' + i] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input" value="${value}" data-type="master_bonus" data-tier="${i}" style="width:70px;">`;
-    });
-
-    // Lesson fee thresholds
-    document.querySelectorAll('.lesson-threshold').forEach((el, i) => {
-        const value = parseInt(el.textContent.replace(/,/g, ''));
-        originalValues['lesson_threshold_' + i] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input" value="${value}" data-type="lesson_threshold" data-tier="${i}">`;
-    });
-
-    // Lesson fee rates
-    document.querySelectorAll('.lesson-rate').forEach((el, i) => {
-        const value = parseInt(el.textContent.replace(/%/g, ''));
-        originalValues['lesson_rate_' + i] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input-small" value="${value}" data-type="lesson_rate" data-tier="${i}">`;
-    });
-
-    // Other threshold (both rows)
-    document.querySelectorAll('.other-threshold').forEach((el, i) => {
-        const value = parseInt(el.textContent.replace(/,/g, ''));
-        originalValues['other_threshold'] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input" value="${value}" data-type="other_threshold" data-index="${i}">`;
-    });
-
-    // Other rate
-    document.querySelectorAll('.other-rate').forEach((el) => {
-        const value = parseInt(el.textContent.replace(/%/g, ''));
-        originalValues['other_rate'] = value;
-        el.innerHTML = `<input type="number" class="form-control form-control-sm tier-input-small" value="${value}" data-type="other_rate">`;
-    });
-
-    // Sync threshold inputs
-    syncThresholdInputs();
-}
-
-function syncThresholdInputs() {
-    // Sync master threshold inputs
-    document.querySelectorAll('input[data-type="master_threshold"]').forEach(input => {
-        input.addEventListener('input', function() {
-            document.querySelectorAll('input[data-type="master_threshold"]').forEach(other => {
-                if (other !== this) other.value = this.value;
-            });
-        });
-    });
-
-    // Sync other threshold inputs
-    document.querySelectorAll('input[data-type="other_threshold"]').forEach(input => {
-        input.addEventListener('input', function() {
-            document.querySelectorAll('input[data-type="other_threshold"]').forEach(other => {
-                if (other !== this) other.value = this.value;
-            });
-        });
-    });
-}
-
-function cancelEdit() {
-    isEditMode = false;
-    document.getElementById('editTiersBtn').classList.remove('d-none');
-    document.getElementById('saveTiersBtn').classList.add('d-none');
-    document.getElementById('cancelTiersBtn').classList.add('d-none');
-
-    // Restore original values
-    location.reload();
-}
-
-function saveTiers() {
-    const data = {
-        incentive_tiers: [],
-        lesson_fee_tiers: [],
-        master_threshold: 0,
-        master_bonus: 0,
-        other_threshold: 0,
-        other_rate: 0
-    };
-
-    // Collect incentive tiers
-    for (let i = 0; i < 9; i++) {
-        const thresholdInput = document.querySelector(`input[data-type="threshold"][data-tier="${i}"]`);
-        const incentiveInput = document.querySelector(`input[data-type="incentive"][data-tier="${i}"]`);
-        const lessonThresholdInput = document.querySelector(`input[data-type="lesson_threshold"][data-tier="${i}"]`);
-        const lessonRateInput = document.querySelector(`input[data-type="lesson_rate"][data-tier="${i}"]`);
-
-        data.incentive_tiers.push({
-            threshold: thresholdInput ? parseInt(thresholdInput.value) || 0 : 0,
-            incentive: incentiveInput ? parseInt(incentiveInput.value) || 0 : 0
-        });
-
-        data.lesson_fee_tiers.push({
-            threshold: lessonThresholdInput ? parseInt(lessonThresholdInput.value) || 0 : 0,
-            rate: lessonRateInput ? parseInt(lessonRateInput.value) || 0 : 0
-        });
-    }
-
-    // Collect master trainer data
-    const masterThresholdInput = document.querySelector('input[data-type="master_threshold"]');
-    const masterBonus1Input = document.querySelector('input[data-type="master_bonus"][data-tier="1"]');
-    data.master_threshold = masterThresholdInput ? parseInt(masterThresholdInput.value) || 0 : 9000000;
-    data.master_bonus = masterBonus1Input ? parseInt(masterBonus1Input.value) || 0 : 300000;
-
-    // Collect other fee data
-    const otherThresholdInput = document.querySelector('input[data-type="other_threshold"]');
-    const otherRateInput = document.querySelector('input[data-type="other_rate"]');
-    data.other_threshold = otherThresholdInput ? parseInt(otherThresholdInput.value) || 0 : 5000000;
-    data.other_rate = otherRateInput ? parseInt(otherRateInput.value) || 0 : 40;
-
-    const btn = document.getElementById('saveTiersBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> 저장 중...';
-
-    fetch('/salary/tiers/update', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(data)
-    })
-    .then(response => response.json())
-    .then(result => {
-        if (result.success) {
-            alert('설정이 저장되었습니다.');
-            location.reload();
-        } else {
-            alert('오류: ' + result.error);
-        }
-    })
-    .catch(error => {
-        alert('저장 중 오류가 발생했습니다: ' + error);
-    })
-    .finally(() => {
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-save"></i> 저장';
-    });
-}
-</script>
 {% endif %}
 
 {% endblock %}

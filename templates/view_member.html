@@ -55,16 +55,25 @@
                         <td>{{ member.created_at[:10] }}</td>
                     </tr>
                     <tr>
-                        <th class="bg-light">환불 상태</th>
+                        <th class="bg-light">상태</th>
                         <td>
                             {% if member.refund_status == 'refunded' %}
                             <span class="badge bg-danger">환불 처리됨</span>
                             {% if member.refund_amount and member.refund_amount > 0 %}
                             <br><small class="text-muted">차감액: {{ "{:,}".format(member.refund_amount|int) }}원</small>
                             <br><small class="text-muted">적용월: {{ member.refund_applied_month }}</small>
+                            {% elif member.original_sessions %}
+                            <br><small class="text-muted">완료: {{ member.sessions }}회 / 원래: {{ member.original_sessions }}회</small>
                             {% else %}
                             <br><small class="text-muted">동월 등록 - 계약금액 제외</small>
                             {% endif %}
+                            {% elif member.transfer_status == 'transferred' %}
+                            <span class="badge bg-warning text-dark">인계됨</span>
+                            <br><small class="text-muted">완료: {{ member.sessions }}회 / 원래: {{ member.original_sessions }}회</small>
+                            <br><small class="text-muted">인계: {{ member.transferred_sessions }}회</small>
+                            {% elif member.transfer_status == 'received' %}
+                            <span class="badge bg-info">인계받음</span>
+                            <br><small class="text-muted">인계받은 세션: {{ member.sessions }}회</small>
                             {% else %}
                             <span class="badge bg-success">정상</span>
                             {% endif %}
@@ -72,24 +81,36 @@
                     </tr>
                 </table>
 
-                <!-- Refund Actions -->
-                <div class="mt-4">
-                    {% if member.refund_status != 'refunded' %}
-                    <form method="POST" action="{{ url_for('refund_member', member_id=member.id) }}"
-                          onsubmit="return confirm('정말 이 회원을 환불 처리하시겠습니까?\n\n환불 처리 시:\n- 해당 회원의 계약금액이 매출에서 제외됩니다.\n- 이전 달 등록 회원인 경우, 인센티브 차액이 이번 달 급여에서 차감됩니다.\n- 수업료(완료된 수업)는 유지됩니다.');">
+                <!-- Actions -->
+                <div class="mt-4 d-flex gap-2 flex-wrap">
+                    {% if member.refund_status != 'refunded' and member.transfer_status != 'transferred' %}
+                    <!-- Transfer Button -->
+                    <a href="{{ url_for('transfer_member', member_id=member.id) }}" class="btn btn-info">
+                        <i class="bi bi-arrow-right-circle"></i> 회원 인계
+                    </a>
+
+                    <!-- Refund Button -->
+                    <form method="POST" action="{{ url_for('refund_member', member_id=member.id) }}" class="d-inline"
+                          onsubmit="return confirm('정말 이 회원을 환불 처리하시겠습니까?\n\n환불 처리 시:\n- 완료된 수업만 매출에 반영됩니다.\n- 이전 달 등록 회원인 경우, 인센티브 차액이 이번 달 급여에서 차감됩니다.');">
                         <button type="submit" class="btn btn-warning">
                             <i class="bi bi-arrow-counterclockwise"></i> 회원 환불
                         </button>
                     </form>
-                    {% elif user.role == 'main_admin' %}
-                    <form method="POST" action="{{ url_for('cancel_refund', member_id=member.id) }}"
+
+                    {% elif member.refund_status == 'refunded' %}
+                    {% if user.role == 'main_admin' %}
+                    <form method="POST" action="{{ url_for('cancel_refund', member_id=member.id) }}" class="d-inline"
                           onsubmit="return confirm('환불을 취소하시겠습니까?\n\n환불 취소 시 해당 회원의 계약금액이 다시 매출에 포함됩니다.');">
                         <button type="submit" class="btn btn-outline-success">
                             <i class="bi bi-arrow-repeat"></i> 환불 취소
                         </button>
                     </form>
                     {% else %}
-                    <p class="text-muted"><small>환불 취소는 최고관리자만 가능합니다.</small></p>
+                    <p class="text-muted mb-0"><small>환불 취소는 최고관리자만 가능합니다.</small></p>
+                    {% endif %}
+
+                    {% elif member.transfer_status == 'transferred' %}
+                    <p class="text-muted mb-0"><small>인계된 회원입니다.</small></p>
                     {% endif %}
                 </div>
 
