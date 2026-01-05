@@ -3152,8 +3152,7 @@ def check_and_return_expired_ot_members(branch_id=None):
             if not completed:
                 # Not completed - return this assignment to pool
                 supabase.table('ot_assignments').update({
-                    'status': 'returned',
-                    'returned_at': now.isoformat()
+                    'status': 'returned'
                 }).eq('id', assignment['id']).execute()
 
                 # Update member's remaining sessions
@@ -3561,8 +3560,7 @@ def reclaim_ot_member(member_id):
         returned_count = 0
         for assignment in active_assignments:
             supabase.table('ot_assignments').update({
-                'status': 'returned',
-                'returned_at': now.isoformat()
+                'status': 'returned'
             }).eq('id', assignment['id']).execute()
             returned_count += 1
 
@@ -3834,12 +3832,10 @@ def reclaim_ot_assignment(assignment_id):
             return redirect(url_for('ot_members'))
 
         member = assignment['member']
-        now = datetime.now(KST)
 
         # Update assignment status to returned
         supabase.table('ot_assignments').update({
-            'status': 'returned',
-            'returned_at': now.isoformat()
+            'status': 'returned'
         }).eq('id', assignment_id).execute()
 
         # Update member's remaining sessions
