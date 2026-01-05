@@ -3097,6 +3097,12 @@ def delete_user(user_id):
         # Also delete OT assignments where this user is the trainer
         supabase.table('ot_assignments').delete().eq('trainer_id', user_id).execute()
 
+        # Delete trainer dayoffs
+        supabase.table('trainer_dayoffs').delete().eq('trainer_id', user_id).execute()
+
+        # Delete schedules where this user is the trainer (for OT members from other trainers)
+        supabase.table('schedules').delete().eq('trainer_id', user_id).execute()
+
         # Delete the user
         supabase.table('users').delete().eq('id', user_id).execute()
 
