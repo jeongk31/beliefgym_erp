@@ -246,25 +246,33 @@
                         </div>
                     </div>
 
-                    <!-- Add Sessions Form -->
-                    <div class="card mb-3 border-success">
-                        <div class="card-header bg-success bg-opacity-10 py-2">
-                            <strong><i class="bi bi-plus-circle me-1"></i>세션 추가</strong>
+                    <!-- Session Management -->
+                    <div class="card mb-3 border-secondary">
+                        <div class="card-header bg-secondary bg-opacity-10 py-2">
+                            <strong><i class="bi bi-gear me-1"></i>세션 관리</strong>
                         </div>
                         <div class="card-body py-2">
-                            <form method="POST" id="increaseSessionsForm" class="row g-2 align-items-center">
-                                <div class="col-auto">
-                                    <label class="col-form-label">추가 횟수:</label>
+                            <div class="row g-2">
+                                <!-- Add Sessions -->
+                                <div class="col-md-6">
+                                    <form method="POST" id="increaseSessionsForm" class="d-flex align-items-center gap-2">
+                                        <input type="number" class="form-control form-control-sm" name="additional_sessions" min="1" max="10" value="1" style="width: 60px;">
+                                        <button type="submit" class="btn btn-sm btn-success">
+                                            <i class="bi bi-plus"></i> 추가
+                                        </button>
+                                    </form>
                                 </div>
-                                <div class="col-auto">
-                                    <input type="number" class="form-control form-control-sm" name="additional_sessions" min="1" max="10" value="1" style="width: 70px;">
+                                <!-- Reduce Sessions -->
+                                <div class="col-md-6">
+                                    <form method="POST" id="decreaseSessionsForm" class="d-flex align-items-center gap-2">
+                                        <input type="number" class="form-control form-control-sm" name="reduce_sessions" min="1" max="10" value="1" style="width: 60px;" id="reduceSessionsInput">
+                                        <button type="submit" class="btn btn-sm btn-danger">
+                                            <i class="bi bi-dash"></i> 감소
+                                        </button>
+                                    </form>
+                                    <small class="text-muted" id="reduceSessionsHint"></small>
                                 </div>
-                                <div class="col-auto">
-                                    <button type="submit" class="btn btn-sm btn-success">
-                                        <i class="bi bi-plus"></i> 세션 추가
-                                    </button>
-                                </div>
-                            </form>
+                            </div>
                         </div>
                     </div>
 
@@ -319,9 +327,6 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-outline-danger" id="reclaimBtn" style="display: none;" onclick="reclaimMember()">
-                    <i class="bi bi-arrow-return-left"></i> 회수
-                </button>
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
             </div>
         </div>
@@ -407,7 +412,18 @@ function renderMemberDetail(member, assignments, history) {
 
     // Setup forms
     document.getElementById('increaseSessionsForm').action = `/ot-members/${member.id}/increase-sessions`;
+    document.getElementById('decreaseSessionsForm').action = `/ot-members/${member.id}/decrease-sessions`;
     document.getElementById('assignTrainerForm').action = `/ot-members/${member.id}/assign`;
+
+    // Calculate completed sessions count
+    const completedCount = assignments ? assignments.filter(a => a.status === 'completed').length : 0;
+    const maxReduce = member.sessions - completedCount;
+
+    // Setup reduce sessions input
+    const reduceInput = document.getElementById('reduceSessionsInput');
+    reduceInput.max = maxReduce > 0 ? maxReduce : 0;
+    reduceInput.disabled = maxReduce <= 0;
+    document.getElementById('reduceSessionsHint').textContent = maxReduce > 0 ? `(최대 ${maxReduce}회 감소 가능)` : '(감소 불가)';
 
     // Update assign sessions dropdown
     const remaining = member.ot_remaining_sessions || 0;
@@ -424,20 +440,13 @@ function renderMemberDetail(member, assignments, history) {
         document.getElementById('assignmentFormSection').style.display = 'none';
     }
 
-    // Show/hide reclaim button
-    const reclaimBtn = document.getElementById('reclaimBtn');
-    if (member.ot_status === 'assigned' || member.ot_status === 'partial') {
-        reclaimBtn.style.display = 'inline-block';
-    } else {
-        reclaimBtn.style.display = 'none';
-    }
-
     // Render assignments
     let assignmentsHtml = '';
     if (assignments && assignments.length > 0) {
         assignments.forEach(a => {
             let statusBadge = '';
             let scheduleInfo = '';
+            let reclaimBtn = '';
 
             if (a.status === 'completed') {
                 statusBadge = '<span class="badge bg-success">완료</span>';
@@ -451,8 +460,12 @@ function renderMemberDetail(member, assignments, history) {
                 } else if (a.schedule_status === 'scheduled') {
                     statusBadge = '<span class="badge bg-primary">예약됨</span>';
                     scheduleInfo = a.schedule_date ? `(${a.schedule_date})` : '';
+                    // Add reclaim button for scheduled but not completed
+                    reclaimBtn = `<button type="button" class="btn btn-outline-danger btn-sm py-0 px-1 ms-1" onclick="event.stopPropagation(); reclaimAssignment('${a.id}')" title="회수"><i class="bi bi-arrow-return-left"></i></button>`;
                 } else {
                     statusBadge = '<span class="badge bg-danger">미예약</span>';
+                    // Add reclaim button for not scheduled
+                    reclaimBtn = `<button type="button" class="btn btn-outline-danger btn-sm py-0 px-1 ms-1" onclick="event.stopPropagation(); reclaimAssignment('${a.id}')" title="회수"><i class="bi bi-arrow-return-left"></i></button>`;
                 }
             }
 
@@ -463,6 +476,7 @@ function renderMemberDetail(member, assignments, history) {
                     <div>
                         <span class="badge ${sessionBadgeClass} me-1">${a.session_number}차</span>
                         <span>${a.trainer ? a.trainer.name : '-'}</span>
+                        ${reclaimBtn}
                     </div>
                     <div>
                         ${statusBadge}
@@ -505,6 +519,10 @@ function renderMemberDetail(member, assignments, history) {
                     actionIcon = '<i class="bi bi-plus-circle text-success"></i>';
                     actionText = '세션추가';
                     break;
+                case 'sessions_decreased':
+                    actionIcon = '<i class="bi bi-dash-circle text-danger"></i>';
+                    actionText = '세션감소';
+                    break;
                 default:
                     actionIcon = '<i class="bi bi-circle"></i>';
                     actionText = h.action;
@@ -534,13 +552,12 @@ function renderMemberDetail(member, assignments, history) {
     document.getElementById('detailContent').style.display = 'block';
 }
 
-function reclaimMember() {
-    if (!currentMemberId) return;
-    if (!confirm('이 OT 회원의 모든 활성 배정을 회수하시겠습니까?')) return;
+function reclaimAssignment(assignmentId) {
+    if (!confirm('이 배정을 회수하시겠습니까?')) return;
 
     const form = document.createElement('form');
     form.method = 'POST';
-    form.action = `/ot-members/${currentMemberId}/reclaim`;
+    form.action = `/ot-assignments/${assignmentId}/reclaim`;
     document.body.appendChild(form);
     form.submit();
 }

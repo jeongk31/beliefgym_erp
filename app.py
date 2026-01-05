@@ -3733,6 +3733,157 @@ def increase_ot_sessions(member_id):
     return redirect(url_for('ot_members'))
 
 
+# Decrease OT Sessions
+@app.route('/ot-members/<member_id>/decrease-sessions', methods=['POST'])
+@role_required('main_admin', 'branch_admin')
+def decrease_ot_sessions(member_id):
+    """Decrease the number of OT sessions for a member"""
+    user = session['user']
+    reduce_sessions = request.form.get('reduce_sessions', '1')
+
+    try:
+        reduce_sessions = int(reduce_sessions)
+        if reduce_sessions < 1:
+            reduce_sessions = 1
+    except:
+        reduce_sessions = 1
+
+    try:
+        # Get member
+        member_response = supabase.table('members').select('*').eq('id', member_id).execute()
+        if not member_response.data:
+            flash('회원을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        member = member_response.data[0]
+
+        if member.get('member_type') != 'OT회원':
+            flash('OT 회원만 세션을 감소할 수 있습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        # Count completed sessions
+        completed_response = supabase.table('ot_assignments').select('id').eq(
+            'member_id', member_id
+        ).eq('status', 'completed').execute()
+        completed_count = len(completed_response.data) if completed_response.data else 0
+
+        current_sessions = member.get('sessions', 1)
+        min_sessions = completed_count  # Can't go below completed count
+
+        if current_sessions - reduce_sessions < min_sessions:
+            flash(f'완료된 세션({completed_count}회)보다 적게 설정할 수 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        # Update sessions count
+        new_sessions = current_sessions - reduce_sessions
+        new_remaining = max(0, (member.get('ot_remaining_sessions') or 0) - reduce_sessions)
+
+        # Determine new status
+        if new_remaining == 0 and completed_count == new_sessions:
+            new_status = 'completed'
+        elif new_remaining == 0:
+            new_status = 'assigned'
+        elif new_remaining > 0:
+            new_status = 'partial' if completed_count > 0 or (new_sessions - new_remaining) > 0 else 'unassigned'
+        else:
+            new_status = member.get('ot_status', 'unassigned')
+
+        supabase.table('members').update({
+            'sessions': new_sessions,
+            'ot_remaining_sessions': new_remaining,
+            'ot_status': new_status
+        }).eq('id', member_id).execute()
+
+        # Record history
+        supabase.table('ot_assignment_history').insert({
+            'member_id': member_id,
+            'action': 'sessions_decreased',
+            'action_by': user['id'],
+            'notes': f'세션 감소: -{reduce_sessions}회 (총 {new_sessions}회)'
+        }).execute()
+
+        flash(f'{member["member_name"]}님의 세션이 {reduce_sessions}회 감소되었습니다. (총 {new_sessions}회)', 'success')
+
+    except Exception as e:
+        flash(f'세션 감소 중 오류: {str(e)}', 'error')
+
+    return redirect(url_for('ot_members'))
+
+
+# Reclaim Single OT Assignment
+@app.route('/ot-assignments/<assignment_id>/reclaim', methods=['POST'])
+@role_required('main_admin', 'branch_admin')
+def reclaim_ot_assignment(assignment_id):
+    """Reclaim a single OT assignment back to the pool"""
+    user = session['user']
+
+    try:
+        # Get assignment
+        assignment_response = supabase.table('ot_assignments').select(
+            '*, member:members!ot_assignments_member_id_fkey(id, member_name, sessions, ot_remaining_sessions, ot_status)'
+        ).eq('id', assignment_id).execute()
+
+        if not assignment_response.data:
+            flash('배정을 찾을 수 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        assignment = assignment_response.data[0]
+
+        if assignment['status'] in ['completed', 'returned']:
+            flash('이미 완료되었거나 반환된 배정입니다.', 'error')
+            return redirect(url_for('ot_members'))
+
+        member = assignment['member']
+        now = datetime.now(KST)
+
+        # Update assignment status to returned
+        supabase.table('ot_assignments').update({
+            'status': 'returned',
+            'returned_at': now.isoformat()
+        }).eq('id', assignment_id).execute()
+
+        # Update member's remaining sessions
+        new_remaining = (member.get('ot_remaining_sessions') or 0) + 1
+
+        # Check how many active assignments remain
+        active_assignments = supabase.table('ot_assignments').select('id').eq(
+            'member_id', member['id']
+        ).eq('status', 'assigned').execute()
+        active_count = len(active_assignments.data) if active_assignments.data else 0
+
+        # Determine new status
+        if active_count == 0 and new_remaining == member.get('sessions', 1):
+            new_status = 'unassigned'
+        elif active_count == 0:
+            new_status = 'partial'
+        else:
+            new_status = 'partial'
+
+        supabase.table('members').update({
+            'ot_remaining_sessions': new_remaining,
+            'ot_status': new_status
+        }).eq('id', member['id']).execute()
+
+        # Record history
+        trainer_response = supabase.table('users').select('name').eq('id', assignment['trainer_id']).execute()
+        trainer_name = trainer_response.data[0]['name'] if trainer_response.data else '-'
+
+        supabase.table('ot_assignment_history').insert({
+            'member_id': member['id'],
+            'trainer_id': assignment['trainer_id'],
+            'action': 'returned',
+            'action_by': user['id'],
+            'notes': f'{assignment["session_number"]}차 배정 회수 (트레이너: {trainer_name})'
+        }).execute()
+
+        flash(f'{member["member_name"]}님의 {assignment["session_number"]}차 배정이 회수되었습니다.', 'success')
+
+    except Exception as e:
+        flash(f'회수 중 오류: {str(e)}', 'error')
+
+    return redirect(url_for('ot_members'))
+
+
 # Get OT Member Detail with History (AJAX)
 @app.route('/ot-members/<member_id>/detail')
 @role_required('main_admin', 'branch_admin')
