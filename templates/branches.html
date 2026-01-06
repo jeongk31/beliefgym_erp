@@ -16,6 +16,7 @@
                         <th>지점장 수</th>
                         <th>트레이너 수</th>
                         <th>등록일</th>
+                        <th>관리</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -29,10 +30,22 @@
                             <span class="badge bg-secondary">{{ branch.trainer_count }}명</span>
                         </td>
                         <td>{{ branch.created_at[:10] }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-primary"
+                                        onclick="openEditModal('{{ branch.id }}', '{{ branch.name }}')">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                                <button type="button" class="btn btn-outline-danger"
+                                        onclick="confirmDelete('{{ branch.id }}', '{{ branch.name }}', {{ branch.admin_count }}, {{ branch.trainer_count }})">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="4" class="text-center text-muted py-4">등록된 지점이 없습니다.</td>
+                        <td colspan="5" class="text-center text-muted py-4">등록된 지점이 없습니다.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -40,4 +53,82 @@
         </div>
     </div>
 </div>
+
+<!-- Edit Branch Modal -->
+<div class="modal fade" id="editBranchModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-pencil me-2"></i>지점 수정</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="POST" id="editBranchForm">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label for="editBranchName" class="form-label">지점명 *</label>
+                        <input type="text" class="form-control" id="editBranchName" name="name" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                    <button type="submit" class="btn btn-primary">저장</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteBranchModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle me-2"></i>지점 삭제</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p id="deleteMessage"></p>
+                <div id="deleteWarning" class="alert alert-warning" style="display: none;">
+                    <i class="bi bi-exclamation-triangle me-1"></i>
+                    <span id="deleteWarningText"></span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <form method="POST" id="deleteBranchForm" class="d-inline">
+                    <button type="submit" class="btn btn-danger" id="deleteBtn">삭제</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openEditModal(branchId, branchName) {
+    document.getElementById('editBranchName').value = branchName;
+    document.getElementById('editBranchForm').action = `/branches/${branchId}/edit`;
+    new bootstrap.Modal(document.getElementById('editBranchModal')).show();
+}
+
+function confirmDelete(branchId, branchName, adminCount, trainerCount) {
+    const totalUsers = adminCount + trainerCount;
+    const deleteBtn = document.getElementById('deleteBtn');
+    const deleteWarning = document.getElementById('deleteWarning');
+    const deleteWarningText = document.getElementById('deleteWarningText');
+
+    document.getElementById('deleteMessage').textContent = `"${branchName}" 지점을 삭제하시겠습니까?`;
+    document.getElementById('deleteBranchForm').action = `/branches/${branchId}/delete`;
+
+    if (totalUsers > 0) {
+        deleteWarning.style.display = 'block';
+        deleteWarningText.textContent = `이 지점에 지점장 ${adminCount}명, 트레이너 ${trainerCount}명이 배정되어 있습니다. 먼저 해당 사용자들을 삭제하거나 다른 지점으로 이동해주세요.`;
+        deleteBtn.disabled = true;
+    } else {
+        deleteWarning.style.display = 'none';
+        deleteBtn.disabled = false;
+    }
+
+    new bootstrap.Modal(document.getElementById('deleteBranchModal')).show();
+}
+</script>
 {% endblock %}

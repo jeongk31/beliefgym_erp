@@ -15,7 +15,7 @@
             <span class="d-none d-md-inline">- 스케줄 삭제</span>
             <span class="d-md-none">삭제</span>
         </button>
-        {% if user.role == 'main_admin' %}
+        {% if user.role in ['main_admin', 'branch_admin'] %}
         <button type="button" class="btn btn-outline-secondary" id="editModeBtn" onclick="enterEditMode()">
             <i class="bi bi-pencil d-md-none"></i>
             <span class="d-none d-md-inline">스케줄 수정</span>
@@ -78,8 +78,8 @@
     </div>
 </div>
 
-{% if user.role == 'main_admin' %}
-<!-- Edit Mode Panel (Hidden by default) - main_admin only -->
+{% if user.role in ['main_admin', 'branch_admin'] %}
+<!-- Edit Mode Panel (Hidden by default) - admin only -->
 <div class="card mb-3 border-secondary" id="editModePanel" style="display: none;">
     <div class="card-body py-3">
         <div class="row align-items-center">
@@ -100,39 +100,31 @@
 
 <!-- OT Assignments Panel (for trainers) -->
 {% if user.role == 'trainer' and ot_assignments %}
-<div class="card mb-3 border-info">
-    <div class="card-header bg-info text-white py-2 d-flex justify-content-between align-items-center">
-        <span><i class="bi bi-person-badge me-1"></i> 배정된 OT ({{ ot_assignments|length }}개)</span>
-        <button type="button" class="btn btn-light btn-sm" onclick="enterOtAddMode()">
-            <i class="bi bi-plus-circle"></i> OT 스케줄 추가
-        </button>
-    </div>
-    <div class="card-body py-2">
-        <div class="row g-2">
-            {% for ot in ot_assignments %}
-            <div class="col-md-4 col-6">
-                <div class="border rounded p-2 ot-assignment-card {% if ot.days_remaining is not none and ot.days_remaining < 2 %}border-danger{% elif ot.days_remaining is not none and ot.days_remaining < 5 %}border-warning{% else %}border-success{% endif %}"
-                     data-assignment-id="{{ ot.id }}"
-                     data-member-id="{{ ot.member.id }}"
-                     data-member-name="{{ ot.member.member_name }}"
-                     data-session-number="{{ ot.session_number }}"
-                     onclick="selectOtAssignment(this)">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <span class="fw-bold small">{{ ot.member.member_name }}</span>
-                        <span class="badge {% if ot.session_number == 1 %}bg-success{% elif ot.session_number == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %}">
-                            OT {{ ot.session_number }}차
-                        </span>
-                    </div>
-                    {% if ot.days_remaining is not none %}
-                    <div class="small {% if ot.days_remaining < 2 %}text-danger fw-bold{% elif ot.days_remaining < 5 %}text-warning{% else %}text-success{% endif %}">
-                        {% if ot.days_remaining < 0 %}{{ ot.days_remaining|abs }}일 초과{% elif ot.days_remaining == 0 %}오늘 만료!{% else %}{{ ot.days_remaining }}일 남음{% endif %}
-                        {% if ot.extended %}<span class="badge bg-secondary ms-1">연장</span>{% endif %}
-                    </div>
-                    {% endif %}
-                </div>
+<div class="bg-info bg-opacity-10 border border-info rounded mb-3 px-2 py-1 d-flex align-items-center">
+    <span class="text-info fw-bold me-2 flex-shrink-0" style="font-size: 0.85rem;">OT:</span>
+    <div class="d-flex align-items-stretch gap-1 flex-nowrap overflow-auto" style="scrollbar-width: thin;">
+        {% for ot in ot_assignments %}
+        <div class="ot-assignment-card d-flex flex-column align-items-center px-2 py-1 rounded flex-shrink-0 {% if ot.days_remaining is not none and ot.days_remaining < 2 %}bg-danger bg-opacity-10 border border-danger{% elif ot.days_remaining is not none and ot.days_remaining < 5 %}bg-warning bg-opacity-10 border border-warning{% else %}bg-success bg-opacity-10 border border-success{% endif %}"
+             data-assignment-id="{{ ot.id }}"
+             data-member-id="{{ ot.member.id }}"
+             data-member-name="{{ ot.member.member_name }}"
+             data-session-number="{{ ot.session_number }}"
+             onclick="selectOtAssignment(this)"
+             style="cursor: pointer; min-width: 50px;">
+            <span class="fw-bold" style="font-size: 0.75rem;">{{ ot.member.member_name }}</span>
+            <div class="d-flex align-items-center gap-1" style="font-size: 0.65rem;">
+                <span class="badge {% if ot.session_number == 1 %}bg-success{% elif ot.session_number == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %}" style="font-size: 0.6rem; padding: 2px 4px;">
+                    {{ ot.session_number }}차
+                </span>
+                {% if ot.days_remaining is not none %}
+                <span class="{% if ot.days_remaining < 2 %}text-danger fw-bold{% elif ot.days_remaining < 5 %}text-warning{% else %}text-success{% endif %}">
+                    {% if ot.days_remaining < 0 %}{{ ot.days_remaining|abs }}일↑{% elif ot.days_remaining == 0 %}오늘{% else %}{{ ot.days_remaining }}일{% endif %}
+                </span>
+                {% endif %}
+                {% if ot.extended %}<span class="badge bg-secondary" style="font-size: 0.55rem; padding: 1px 3px;">연장</span>{% endif %}
             </div>
-            {% endfor %}
         </div>
+        {% endfor %}
     </div>
 </div>
 {% endif %}
@@ -301,6 +293,25 @@
 {% endif %}
 
 <style>
+/* OT Panel scrollbar styling */
+.ot-assignment-card:hover {
+    transform: scale(1.02);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+.ot-assignment-card.selected {
+    box-shadow: 0 0 0 2px #0d6efd;
+}
+.overflow-auto::-webkit-scrollbar {
+    height: 4px;
+}
+.overflow-auto::-webkit-scrollbar-track {
+    background: transparent;
+}
+.overflow-auto::-webkit-scrollbar-thumb {
+    background: #0dcaf0;
+    border-radius: 4px;
+}
+
 .schedule-table {
     table-layout: fixed;
 }
@@ -439,21 +450,21 @@ body.add-mode .schedule-cell:not(.has-schedule) .add-hint {
     font-size: 2rem;
     font-weight: bold;
 }
-/* For main_admin: can delete any schedule */
-body.delete-mode.is-main-admin .schedule-cell.has-schedule .delete-overlay {
+/* For admin (main_admin or branch_admin): can delete any schedule */
+body.delete-mode.is-admin .schedule-cell.has-schedule .delete-overlay {
     display: flex;
 }
-body.delete-mode.is-main-admin .schedule-cell.has-schedule:hover .delete-overlay {
+body.delete-mode.is-admin .schedule-cell.has-schedule:hover .delete-overlay {
     background: rgba(220, 53, 69, 0.95);
 }
-/* For non-main_admin: can only delete unlocked (planned & not past) schedules */
-body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule:not([data-is-locked="true"]) .delete-overlay {
+/* For non-admin: can only delete unlocked (planned & not past) schedules */
+body.delete-mode:not(.is-admin) .schedule-cell.has-schedule:not([data-is-locked="true"]) .delete-overlay {
     display: flex;
 }
-body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule:not([data-is-locked="true"]):hover .delete-overlay {
+body.delete-mode:not(.is-admin) .schedule-cell.has-schedule:not([data-is-locked="true"]):hover .delete-overlay {
     background: rgba(220, 53, 69, 0.95);
 }
-body.delete-mode:not(.is-main-admin) .schedule-cell.has-schedule[data-is-locked="true"] {
+body.delete-mode:not(.is-admin) .schedule-cell.has-schedule[data-is-locked="true"] {
     opacity: 0.5;
 }
 /* Clickable schedule item */
@@ -744,8 +755,15 @@ body.delete-mode .schedule-item.clickable {
 const todayDate = '{{ selected_date }}';
 const userRole = '{{ user.role }}';
 const isMainAdmin = userRole === 'main_admin';
+const isAdmin = userRole === 'main_admin' || userRole === 'branch_admin';
 const selectedTrainerId = '{{ selected_trainer_id or "" }}';
 const filterBranchId = '{{ filter_branch_id or "" }}';
+
+// Working hours for auto work type classification on weekdays
+const trainerWorkingHours = {
+    start: '{{ trainer_working_hours.start or "" }}',
+    end: '{{ trainer_working_hours.end or "" }}'
+};
 
 function filterByBranch(branchId) {
     // When branch changes, clear trainer selection and reload
@@ -756,9 +774,12 @@ function filterByBranch(branchId) {
 }
 
 document.addEventListener('DOMContentLoaded', function() {
-    // Add main_admin class to body for CSS targeting
+    // Add admin class to body for CSS targeting
     if (isMainAdmin) {
         document.body.classList.add('is-main-admin');
+    }
+    if (isAdmin) {
+        document.body.classList.add('is-admin');
     }
 
     const weekStart = new Date('{{ week_start }}');
@@ -809,7 +830,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     } else if (savedMode === 'delete') {
         enterDeleteMode(true); // true = restoring
-    } else if (savedMode === 'edit' && isMainAdmin) {
+    } else if (savedMode === 'edit' && isAdmin) {
         enterEditMode(true); // true = restoring
     }
 });
@@ -835,7 +856,7 @@ function enterDeleteMode(restoring = false) {
 }
 
 function enterEditMode(restoring = false) {
-    if (!isMainAdmin) return;
+    if (!isAdmin) return;
     exitMode(true); // silent exit
     document.body.classList.add('edit-mode');
     const editPanel = document.getElementById('editModePanel');
@@ -991,8 +1012,8 @@ function handleScheduleClick(element) {
     const status = element.dataset.status;
     const workType = element.dataset.workType;
 
-    // Edit mode - open edit modal (main_admin only)
-    if (document.body.classList.contains('edit-mode') && isMainAdmin) {
+    // Edit mode - open edit modal (admin only)
+    if (document.body.classList.contains('edit-mode') && isAdmin) {
         openEditModal(scheduleId, memberName, scheduleDate, startTime, status, workType);
         return;
     }
@@ -1076,8 +1097,8 @@ function deleteSchedule(scheduleId, scheduleDate) {
     const status = cell ? cell.dataset.status : '';
     const isLocked = cell ? cell.dataset.isLocked === 'true' : false;
 
-    // Only main_admin can modify completed/cancelled or past schedules
-    if (!isMainAdmin && isLocked) {
+    // Only admin can modify completed/cancelled or past schedules
+    if (!isAdmin && isLocked) {
         if (status === '수업 완료' || status === '수업 취소') {
             alert('지난 수업에 대한 수정은 불가능합니다.');
         } else {
@@ -1128,6 +1149,25 @@ let isModalDrawing = false;
 let modalLastX = 0;
 let modalLastY = 0;
 
+function isWeekday(dateStr) {
+    const date = new Date(dateStr);
+    const day = date.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
+    return day >= 1 && day <= 5; // Monday to Friday
+}
+
+function isWithinWorkingHours(scheduleTimeStr) {
+    if (!trainerWorkingHours.start || !trainerWorkingHours.end) {
+        return null; // Working hours not set
+    }
+
+    // Compare schedule's time with working hours
+    const scheduleTime = scheduleTimeStr.substring(0, 5);
+    const start = trainerWorkingHours.start.substring(0, 5);
+    const end = trainerWorkingHours.end.substring(0, 5);
+
+    return scheduleTime >= start && scheduleTime < end;
+}
+
 function openCompleteModal(scheduleId, memberName, scheduleDate, startTime, endTime) {
     // Don't open modal in add/delete mode
     if (document.body.classList.contains('add-mode') || document.body.classList.contains('delete-mode')) {
@@ -1144,6 +1184,39 @@ function openCompleteModal(scheduleId, memberName, scheduleDate, startTime, endT
     // Reset form
     document.querySelectorAll('input[name="modal_work_type"]').forEach(r => r.checked = false);
     clearModalSignature();
+
+    // Check if weekday for auto work type classification
+    const workTypeSection = document.getElementById('workTypeSelection');
+    const workTypeAuto = document.getElementById('workTypeAutoDisplay');
+    const autoWorkTypeHidden = document.getElementById('autoWorkTypeHidden');
+
+    // Reset auto work type hidden value
+    if (autoWorkTypeHidden) autoWorkTypeHidden.value = '';
+
+    if (isWeekday(scheduleDate)) {
+        // Weekday: auto-determine work type based on current time and working hours
+        const withinHours = isWithinWorkingHours(startTime);
+
+        if (withinHours === null) {
+            // Working hours not set - show manual selection
+            workTypeSection.style.display = 'block';
+            if (workTypeAuto) workTypeAuto.style.display = 'none';
+        } else {
+            // Working hours set - auto-determine and show read-only
+            workTypeSection.style.display = 'none';
+            if (workTypeAuto) {
+                workTypeAuto.style.display = 'block';
+                const autoType = withinHours ? '근무내' : '근무외';
+                const autoLabel = withinHours ? 'Main' : '그 외';
+                document.getElementById('autoWorkTypeValue').textContent = autoLabel;
+                autoWorkTypeHidden.value = autoType;
+            }
+        }
+    } else {
+        // Weekend: manual selection
+        workTypeSection.style.display = 'block';
+        if (workTypeAuto) workTypeAuto.style.display = 'none';
+    }
 
     // Show modal
     const modal = new bootstrap.Modal(document.getElementById('completeSessionModal'));
@@ -1247,11 +1320,23 @@ function clearModalSignature() {
 }
 
 function submitCompleteSession() {
-    const workType = document.querySelector('input[name="modal_work_type"]:checked');
+    // Get work type from either manual selection or auto-determined value
+    let workTypeValue = null;
+    const autoWorkTypeHidden = document.getElementById('autoWorkTypeHidden');
+    const manualWorkType = document.querySelector('input[name="modal_work_type"]:checked');
+
+    if (autoWorkTypeHidden && autoWorkTypeHidden.value) {
+        // Auto-determined work type (weekday with working hours set)
+        workTypeValue = autoWorkTypeHidden.value;
+    } else if (manualWorkType) {
+        // Manual selection (weekend or working hours not set)
+        workTypeValue = manualWorkType.value;
+    }
+
     const signature = document.getElementById('modal_signature').value;
     const sessionNotes = document.getElementById('modal_session_notes').value;
 
-    if (!workType) {
+    if (!workTypeValue) {
         alert('근무 유형을 선택해주세요.');
         return;
     }
@@ -1272,7 +1357,7 @@ function submitCompleteSession() {
         },
         body: JSON.stringify({
             schedule_id: currentScheduleId,
-            work_type: workType.value,
+            work_type: workTypeValue,
             session_signature: signature,
             session_notes: sessionNotes
         })
@@ -1331,7 +1416,7 @@ function submitCancelSession() {
     });
 }
 
-// ===== Admin Edit Modal Functions (main_admin only) =====
+// ===== Admin Edit Modal Functions (admin only) =====
 let editScheduleId = null;
 
 function openEditModal(scheduleId, memberName, scheduleDate, startTime, currentStatus, currentWorkType) {
@@ -1434,8 +1519,8 @@ function submitEditSchedule() {
                     </div>
                 </div>
 
-                <!-- Work Type Selection -->
-                <div class="mb-3">
+                <!-- Work Type Selection (Manual - for weekends or when working hours not set) -->
+                <div class="mb-3" id="workTypeSelection">
                     <label class="form-label"><strong>근무 유형 *</strong></label>
                     <div class="d-flex gap-3">
                         <div class="form-check form-check-inline">
@@ -1453,6 +1538,17 @@ function submitEditSchedule() {
                             </label>
                         </div>
                     </div>
+                </div>
+
+                <!-- Work Type Auto Display (for weekdays with working hours set) -->
+                <div class="mb-3" id="workTypeAutoDisplay" style="display: none;">
+                    <label class="form-label"><strong>근무 유형</strong></label>
+                    <div class="alert alert-secondary py-2 mb-1">
+                        <span id="autoWorkTypeValue" class="fw-bold"></span>
+                        <small class="text-muted ms-2">(현재 시간 기준 자동 분류)</small>
+                    </div>
+                    <input type="hidden" id="autoWorkTypeHidden" value="">
+                    <small class="text-muted">평일은 근무시간에 따라 자동 분류됩니다.</small>
                 </div>
 
                 <!-- Signature Pad -->
@@ -1490,8 +1586,8 @@ function submitEditSchedule() {
     </div>
 </div>
 
-<!-- Admin Edit Schedule Modal (main_admin only) -->
-{% if user.role == 'main_admin' %}
+<!-- Admin Edit Schedule Modal (admin only) -->
+{% if user.role in ['main_admin', 'branch_admin'] %}
 <div class="modal fade" id="editScheduleModal" tabindex="-1" aria-labelledby="editScheduleModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-sm modal-dialog-centered">
         <div class="modal-content">

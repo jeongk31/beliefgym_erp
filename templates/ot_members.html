@@ -116,24 +116,31 @@
                 <div class="mb-2">
                     <small class="text-muted d-block mb-1">배정 현황:</small>
                     {% for assignment in member.assignments %}
+                    {% set display_num = assignment.display_session_number or assignment.session_number %}
                     <div class="d-flex justify-content-between align-items-center border rounded px-2 py-1 mb-1
                         {% if assignment.status == 'completed' %}bg-success bg-opacity-10
                         {% elif assignment.status == 'returned' %}bg-warning bg-opacity-10
+                        {% elif assignment.status == 'cancelled' %}bg-secondary bg-opacity-10
                         {% else %}bg-light{% endif %}">
                         <div>
-                            <span class="badge {% if assignment.session_number == 1 %}bg-success{% elif assignment.session_number == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %} assignment-badge">
-                                {{ assignment.session_number }}차
+                            <span class="badge {% if display_num == 1 %}bg-success{% elif display_num == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %} assignment-badge">
+                                {{ display_num }}차
                             </span>
-                            <span class="small">{{ assignment.trainer.name if assignment.trainer else '-' }}</span>
+                            <span class="small {% if assignment.status == 'cancelled' %}text-muted{% endif %}">{{ assignment.trainer.name if assignment.trainer else '-' }}</span>
                         </div>
                         <div>
                             {% if assignment.status == 'completed' %}
                             <span class="badge bg-success"><i class="bi bi-check"></i> 완료</span>
                             {% elif assignment.status == 'returned' %}
                             <span class="badge bg-warning text-dark">반환</span>
+                            {% elif assignment.status == 'cancelled' %}
+                            <span class="badge bg-dark">취소</span>
+                            {% elif assignment.schedule_status == 'scheduled' %}
+                            <span class="badge bg-primary">예약됨</span>
+                            <small class="text-muted ms-1">{{ assignment.schedule_date }}</small>
                             {% else %}
-                            {% set deadline = assignment.deadline[:10] %}
-                            <small class="text-muted">{{ deadline }}</small>
+                            <span class="badge bg-danger">미예약</span>
+                            <small class="text-muted ms-1">{{ assignment.deadline[:10] if assignment.deadline else '' }}</small>
                             {% if assignment.extended %}<span class="badge bg-info ms-1">연장</span>{% endif %}
                             {% endif %}
                         </div>
@@ -440,24 +447,26 @@ function renderMemberDetail(member, assignments, history) {
         document.getElementById('assignmentFormSection').style.display = 'none';
     }
 
-    // Render assignments
+    // Render assignments (use display_session_number for proper numbering)
     let assignmentsHtml = '';
     if (assignments && assignments.length > 0) {
         assignments.forEach(a => {
             let statusBadge = '';
             let scheduleInfo = '';
             let reclaimBtn = '';
+            const displayNum = a.display_session_number || a.session_number;
 
             if (a.status === 'completed') {
                 statusBadge = '<span class="badge bg-success">완료</span>';
+                scheduleInfo = a.schedule_date ? `(${a.schedule_date})` : '';
+            } else if (a.status === 'cancelled') {
+                statusBadge = '<span class="badge bg-dark">취소됨</span>';
+                // No reclaim button for cancelled
             } else if (a.status === 'returned') {
                 statusBadge = '<span class="badge bg-warning text-dark">반환</span>';
             } else {
                 // Check schedule status
-                if (a.schedule_status === 'completed') {
-                    statusBadge = '<span class="badge bg-success">수업완료</span>';
-                    scheduleInfo = a.schedule_date ? `(${a.schedule_date})` : '';
-                } else if (a.schedule_status === 'scheduled') {
+                if (a.schedule_status === 'scheduled') {
                     statusBadge = '<span class="badge bg-primary">예약됨</span>';
                     scheduleInfo = a.schedule_date ? `(${a.schedule_date})` : '';
                     // Add reclaim button for scheduled but not completed
@@ -469,12 +478,12 @@ function renderMemberDetail(member, assignments, history) {
                 }
             }
 
-            let sessionBadgeClass = a.session_number === 1 ? 'bg-success' : a.session_number === 2 ? 'bg-primary' : 'bg-warning text-dark';
+            let sessionBadgeClass = displayNum === 1 ? 'bg-success' : displayNum === 2 ? 'bg-primary' : 'bg-warning text-dark';
 
             assignmentsHtml += `
-                <div class="d-flex justify-content-between align-items-center border rounded px-2 py-1 mb-1">
+                <div class="d-flex justify-content-between align-items-center border rounded px-2 py-1 mb-1 ${a.status === 'cancelled' ? 'bg-light text-muted' : ''}">
                     <div>
-                        <span class="badge ${sessionBadgeClass} me-1">${a.session_number}차</span>
+                        <span class="badge ${sessionBadgeClass} me-1">${displayNum}차</span>
                         <span>${a.trainer ? a.trainer.name : '-'}</span>
                         ${reclaimBtn}
                     </div>
@@ -522,6 +531,10 @@ function renderMemberDetail(member, assignments, history) {
                 case 'sessions_decreased':
                     actionIcon = '<i class="bi bi-dash-circle text-danger"></i>';
                     actionText = '세션감소';
+                    break;
+                case 'cancelled':
+                    actionIcon = '<i class="bi bi-x-circle text-dark"></i>';
+                    actionText = '취소';
                     break;
                 default:
                     actionIcon = '<i class="bi bi-circle"></i>';

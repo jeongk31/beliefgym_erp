@@ -2,7 +2,15 @@ from flask import Flask, render_template, request, redirect, url_for, session, f
 from supabase import create_client, Client
 from functools import wraps
 from datetime import datetime, timedelta, timezone
+import hashlib
+import time
+import threading
 import config
+
+# Track recent form submissions to prevent duplicates
+_recent_submissions = {}  # {hash: (timestamp, redirect_url)}
+_submission_lock = threading.Lock()
+DUPLICATE_WINDOW = 5  # seconds
 
 # Korean timezone (UTC+9)
 KST = timezone(timedelta(hours=9))
@@ -71,6 +79,53 @@ def role_required(*roles):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
+
+
+def prevent_duplicate_submission(f):
+    """Decorator to prevent duplicate form submissions within a time window."""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if request.method == 'POST':
+            # Create hash from request path + form data + user session
+            user_id = session.get('user', {}).get('id', 'anonymous')
+            form_data = str(sorted(request.form.items()))
+            submission_hash = hashlib.md5(
+                f"{request.path}:{user_id}:{form_data}".encode()
+            ).hexdigest()
+
+            current_time = time.time()
+
+            with _submission_lock:
+                # Clean old entries
+                old_hashes = [h for h, t in _recent_submissions.items()
+                             if current_time - t > DUPLICATE_WINDOW]
+                for h in old_hashes:
+                    del _recent_submissions[h]
+
+                # Check for duplicate
+                if submission_hash in _recent_submissions:
+                    # Redirect to list page based on the route
+                    if 'members' in request.path:
+                        # OT members: trainers go to members, admins go to ot_members
+                        if request.form.get('member_type') == 'OT회원':
+                            user = session.get('user', {})
+                            if user.get('role') == 'trainer':
+                                return redirect(url_for('members'))
+                            return redirect(url_for('ot_members'))
+                        return redirect(url_for('members'))
+                    elif 'trainers' in request.path:
+                        return redirect(url_for('trainers'))
+                    elif 'branch-admins' in request.path:
+                        return redirect(url_for('branch_admins'))
+                    elif 'branches' in request.path:
+                        return redirect(url_for('branches'))
+                    return redirect(url_for('dashboard'))
+
+                # Mark as submitted
+                _recent_submissions[submission_hash] = current_time
+
+        return f(*args, **kwargs)
+    return decorated_function
 
 
 def get_display_name(member, all_members_for_trainer):
@@ -720,6 +775,7 @@ def members():
 
 @app.route('/members/add', methods=['GET', 'POST'])
 @login_required
+@prevent_duplicate_submission
 def add_member():
     user = session['user']
     trainers = []
@@ -821,7 +877,10 @@ def add_member():
 
             supabase.table('members').insert(member_data).execute()
             if member_type == 'OT회원':
-                flash('OT 회원이 등록되었습니다. 지점장이 트레이너에게 배정합니다.', 'success')
+                flash('OT 등록이 완료 되었습니다.', 'success')
+                # Trainers can't access ot_members page, redirect to members instead
+                if user['role'] == 'trainer':
+                    return redirect(url_for('members'))
                 return redirect(url_for('ot_members'))
             else:
                 flash('회원이 성공적으로 등록되었습니다.', 'success')
@@ -1067,6 +1126,7 @@ def trainers():
 
 @app.route('/trainers/add', methods=['GET', 'POST'])
 @role_required('main_admin', 'branch_admin')
+@prevent_duplicate_submission
 def add_trainer():
     user = session['user']
 
@@ -1109,6 +1169,41 @@ def add_trainer():
     return render_template('add_trainer.html', user=user, branches=branches)
 
 
+@app.route('/trainers/<trainer_id>/working-hours', methods=['POST'])
+@role_required('main_admin', 'branch_admin')
+def update_trainer_working_hours(trainer_id):
+    """Update trainer's working hours"""
+    user = session['user']
+    data = request.get_json()
+
+    working_hours_start = data.get('working_hours_start')
+    working_hours_end = data.get('working_hours_end')
+
+    if not working_hours_start or not working_hours_end:
+        return jsonify({'success': False, 'error': '시작 시간과 종료 시간을 모두 입력해주세요.'}), 400
+
+    # Verify trainer exists and belongs to the right branch (for branch_admin)
+    trainer_response = supabase.table('users').select('*').eq('id', trainer_id).eq('role', 'trainer').execute()
+    if not trainer_response.data:
+        return jsonify({'success': False, 'error': '트레이너를 찾을 수 없습니다.'}), 404
+
+    trainer = trainer_response.data[0]
+
+    # Branch admin can only edit trainers in their branch
+    if user['role'] == 'branch_admin' and trainer['branch_id'] != user['branch_id']:
+        return jsonify({'success': False, 'error': '권한이 없습니다.'}), 403
+
+    try:
+        supabase.table('users').update({
+            'working_hours_start': working_hours_start,
+            'working_hours_end': working_hours_end
+        }).eq('id', trainer_id).execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'저장 중 오류가 발생했습니다: {str(e)}'}), 500
+
+
 # Branch management routes (지점 관리) - Main Admin only
 @app.route('/branches')
 @role_required('main_admin')
@@ -1130,6 +1225,7 @@ def branches():
 
 @app.route('/branches/add', methods=['GET', 'POST'])
 @role_required('main_admin')
+@prevent_duplicate_submission
 def add_branch():
     user = session['user']
 
@@ -1148,6 +1244,47 @@ def add_branch():
             flash(f'지점 등록 중 오류가 발생했습니다: {str(e)}', 'error')
 
     return render_template('add_branch.html', user=user)
+
+
+@app.route('/branches/<branch_id>/edit', methods=['POST'])
+@role_required('main_admin')
+def edit_branch(branch_id):
+    name = request.form.get('name')
+
+    if not name:
+        flash('지점명을 입력해주세요.', 'error')
+        return redirect(url_for('branches'))
+
+    try:
+        supabase.table('branches').update({'name': name}).eq('id', branch_id).execute()
+        flash('지점이 성공적으로 수정되었습니다.', 'success')
+    except Exception as e:
+        flash(f'지점 수정 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return redirect(url_for('branches'))
+
+
+@app.route('/branches/<branch_id>/delete', methods=['POST'])
+@role_required('main_admin')
+def delete_branch(branch_id):
+    try:
+        # Check for users assigned to this branch
+        users_response = supabase.table('users').select('id, name, role').eq('branch_id', branch_id).execute()
+        users = users_response.data if users_response.data else []
+
+        if users:
+            admin_count = len([u for u in users if u['role'] == 'branch_admin'])
+            trainer_count = len([u for u in users if u['role'] == 'trainer'])
+            flash(f'이 지점에 지점장 {admin_count}명, 트레이너 {trainer_count}명이 배정되어 있습니다. 먼저 해당 사용자들을 삭제해주세요.', 'error')
+            return redirect(url_for('branches'))
+
+        # Delete the branch
+        supabase.table('branches').delete().eq('id', branch_id).execute()
+        flash('지점이 성공적으로 삭제되었습니다.', 'success')
+    except Exception as e:
+        flash(f'지점 삭제 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return redirect(url_for('branches'))
 
 
 # Branch Admin (지점장) management routes - Main Admin only
@@ -1174,6 +1311,7 @@ def branch_admins():
 
 @app.route('/branch-admins/add', methods=['GET', 'POST'])
 @role_required('main_admin')
+@prevent_duplicate_submission
 def add_branch_admin():
     user = session['user']
 
@@ -1283,6 +1421,9 @@ def schedule():
         trainer_ids = [t['id'] for t in branch_trainers.data] if branch_trainers.data else []
         if trainer_ids:
             query = query.in_('trainer_id', trainer_ids)
+
+    # Exclude cancelled schedules for all users - they can reschedule those time slots
+    query = query.neq('status', '수업 취소')
 
     response = query.order('schedule_date').order('start_time').execute()
     schedules = response.data if response.data else []
@@ -1398,6 +1539,25 @@ def schedule():
                     ot['days_remaining'] = None
             ot_assignments_list = ot_response.data
 
+    # Get trainer's working hours (for auto work type classification on weekdays)
+    trainer_working_hours = {'start': None, 'end': None}
+    if user['role'] == 'trainer':
+        trainer_response = supabase.table('users').select('working_hours_start, working_hours_end').eq('id', user['id']).execute()
+        if trainer_response.data:
+            trainer_data = trainer_response.data[0]
+            trainer_working_hours = {
+                'start': trainer_data.get('working_hours_start'),
+                'end': trainer_data.get('working_hours_end')
+            }
+    elif selected_trainer_id:
+        trainer_response = supabase.table('users').select('working_hours_start, working_hours_end').eq('id', selected_trainer_id).execute()
+        if trainer_response.data:
+            trainer_data = trainer_response.data[0]
+            trainer_working_hours = {
+                'start': trainer_data.get('working_hours_start'),
+                'end': trainer_data.get('working_hours_end')
+            }
+
     return render_template('schedule.html',
                          user=user,
                          schedule_grid=schedule_grid,
@@ -1411,7 +1571,8 @@ def schedule():
                          filter_branch_id=filter_branch_id,
                          members=members_list,
                          ot_assignments=ot_assignments_list,
-                         near_deadline_ots=near_deadline_ots)
+                         near_deadline_ots=near_deadline_ots,
+                         trainer_working_hours=trainer_working_hours)
 
 
 @app.route('/schedule/add', methods=['GET', 'POST'])
@@ -1470,6 +1631,22 @@ def add_schedule():
                                  trainers=trainers_list, prefill_date=prefill_date, prefill_time=prefill_time)
 
         try:
+            # Check if there's an existing schedule at this time slot
+            existing_schedule = supabase.table('schedules').select('id, status').eq(
+                'trainer_id', trainer_id
+            ).eq('schedule_date', schedule_date).eq('start_time', start_time).execute()
+
+            if existing_schedule.data:
+                existing = existing_schedule.data[0]
+                if existing['status'] == '수업 취소':
+                    # Delete the cancelled schedule to make room for the new one
+                    supabase.table('schedules').delete().eq('id', existing['id']).execute()
+                else:
+                    # There's an active schedule at this time
+                    flash('해당 시간에 이미 스케줄이 있습니다.', 'error')
+                    return render_template('add_schedule.html', user=user, members=members_list,
+                                         trainers=trainers_list, prefill_date=prefill_date, prefill_time=prefill_time)
+
             schedule_data = {
                 'trainer_id': trainer_id,
                 'member_id': member_id,
@@ -1615,6 +1792,49 @@ def cancel_session(schedule_id):
             'status': '수업 취소'
         }).eq('id', schedule_id).execute()
 
+        # If this is an OT schedule, mark the assignment as 'cancelled' and return session to pool
+        ot_assignment_id = schedule_item.get('ot_assignment_id')
+        if ot_assignment_id:
+            # Get member info to update remaining sessions
+            member_id = schedule_item.get('member_id')
+            member_response = supabase.table('members').select('id, sessions, ot_remaining_sessions, ot_status').eq('id', member_id).execute()
+
+            supabase.table('ot_assignments').update({
+                'status': 'cancelled'
+            }).eq('id', ot_assignment_id).execute()
+
+            # Update member's remaining sessions (similar to return logic)
+            if member_response.data:
+                member = member_response.data[0]
+                new_remaining = (member.get('ot_remaining_sessions') or 0) + 1
+
+                # Check how many active assignments remain
+                active_assignments = supabase.table('ot_assignments').select('id').eq(
+                    'member_id', member_id
+                ).in_('status', ['assigned', 'scheduled']).execute()
+
+                active_count = len(active_assignments.data) if active_assignments.data else 0
+
+                # Determine new status
+                if active_count > 0:
+                    new_status = 'partial' if new_remaining > 0 else 'assigned'
+                else:
+                    new_status = 'partial' if new_remaining < member.get('sessions', 1) else 'unassigned'
+
+                supabase.table('members').update({
+                    'ot_remaining_sessions': new_remaining,
+                    'ot_status': new_status
+                }).eq('id', member_id).execute()
+
+            # Log the cancellation
+            supabase.table('ot_assignment_history').insert({
+                'member_id': member_id,
+                'trainer_id': schedule_item.get('trainer_id'),
+                'action': 'cancelled',
+                'action_by': user['id'],
+                'notes': f'수업 취소됨'
+            }).execute()
+
         flash('수업이 취소되었습니다.', 'success')
     except Exception as e:
         flash(f'수업 취소 중 오류가 발생했습니다: {str(e)}', 'error')
@@ -1731,15 +1951,59 @@ def cancel_session_ajax():
             'status': '수업 취소'
         }).eq('id', schedule_id).execute()
 
+        # If this is an OT schedule, mark the assignment as 'cancelled' and return session to pool
+        ot_assignment_id = schedule_item.get('ot_assignment_id')
+        if ot_assignment_id:
+            # Get member info to update remaining sessions
+            member_id = schedule_item.get('member_id')
+            member_response = supabase.table('members').select('id, sessions, ot_remaining_sessions, ot_status').eq('id', member_id).execute()
+
+            supabase.table('ot_assignments').update({
+                'status': 'cancelled'
+            }).eq('id', ot_assignment_id).execute()
+
+            # Update member's remaining sessions (similar to return logic)
+            if member_response.data:
+                member = member_response.data[0]
+                new_remaining = (member.get('ot_remaining_sessions') or 0) + 1
+
+                # Check how many active assignments remain
+                active_assignments = supabase.table('ot_assignments').select('id').eq(
+                    'member_id', member_id
+                ).in_('status', ['assigned', 'scheduled']).execute()
+
+                active_count = len(active_assignments.data) if active_assignments.data else 0
+
+                # Determine new status
+                if active_count > 0:
+                    new_status = 'partial' if new_remaining > 0 else 'assigned'
+                else:
+                    new_status = 'partial' if new_remaining < member.get('sessions', 1) else 'unassigned'
+
+                supabase.table('members').update({
+                    'ot_remaining_sessions': new_remaining,
+                    'ot_status': new_status
+                }).eq('id', member_id).execute()
+
+            # Log the cancellation
+            supabase.table('ot_assignment_history').insert({
+                'member_id': member_id,
+                'trainer_id': schedule_item.get('trainer_id'),
+                'action': 'cancelled',
+                'action_by': user['id'],
+                'notes': f'수업 취소됨'
+            }).execute()
+
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': f'수업 취소 중 오류가 발생했습니다: {str(e)}'}), 500
 
 
 @app.route('/schedule/edit-status', methods=['POST'])
-@role_required('main_admin')
+@role_required('main_admin', 'branch_admin')
 def edit_schedule_status():
-    """AJAX endpoint for main_admin to edit any schedule status"""
+    """AJAX endpoint for main_admin/branch_admin to edit any schedule status"""
+    user = session['user']
     data = request.get_json()
 
     schedule_id = data.get('schedule_id')
@@ -1752,11 +2016,19 @@ def edit_schedule_status():
     if new_status not in ['수업 계획', '수업 완료', '수업 취소']:
         return jsonify({'success': False, 'error': '유효하지 않은 상태입니다.'}), 400
 
-    # Get schedule details
-    schedule_response = supabase.table('schedules').select('*').eq('id', schedule_id).execute()
+    # Get schedule details with trainer info
+    schedule_response = supabase.table('schedules').select('*, trainer:users!schedules_trainer_id_fkey(id, branch_id)').eq('id', schedule_id).execute()
 
     if not schedule_response.data:
         return jsonify({'success': False, 'error': '스케줄을 찾을 수 없습니다.'}), 404
+
+    schedule_item = schedule_response.data[0]
+
+    # Branch admin can only edit schedules for trainers in their branch
+    if user['role'] == 'branch_admin':
+        trainer = schedule_item.get('trainer')
+        if not trainer or trainer.get('branch_id') != user['branch_id']:
+            return jsonify({'success': False, 'error': '해당 지점의 트레이너 스케줄만 수정할 수 있습니다.'}), 403
 
     try:
         update_data = {'status': new_status}
@@ -1772,6 +2044,69 @@ def edit_schedule_status():
             update_data['session_signature'] = None
 
         supabase.table('schedules').update(update_data).eq('id', schedule_id).execute()
+
+        # Handle OT assignment status changes
+        ot_assignment_id = schedule_item.get('ot_assignment_id')
+        if ot_assignment_id:
+            member_id = schedule_item.get('member_id')
+
+            if new_status == '수업 취소':
+                # Mark assignment as cancelled and return session to pool
+                member_response = supabase.table('members').select('id, sessions, ot_remaining_sessions, ot_status').eq('id', member_id).execute()
+
+                supabase.table('ot_assignments').update({
+                    'status': 'cancelled'
+                }).eq('id', ot_assignment_id).execute()
+
+                # Update member's remaining sessions
+                if member_response.data:
+                    member = member_response.data[0]
+                    new_remaining = (member.get('ot_remaining_sessions') or 0) + 1
+
+                    # Check how many active assignments remain
+                    active_assignments = supabase.table('ot_assignments').select('id').eq(
+                        'member_id', member_id
+                    ).in_('status', ['assigned', 'scheduled']).execute()
+
+                    active_count = len(active_assignments.data) if active_assignments.data else 0
+
+                    # Determine new status
+                    if active_count > 0:
+                        member_status = 'partial' if new_remaining > 0 else 'assigned'
+                    else:
+                        member_status = 'partial' if new_remaining < member.get('sessions', 1) else 'unassigned'
+
+                    supabase.table('members').update({
+                        'ot_remaining_sessions': new_remaining,
+                        'ot_status': member_status
+                    }).eq('id', member_id).execute()
+
+                # Log the cancellation
+                supabase.table('ot_assignment_history').insert({
+                    'member_id': member_id,
+                    'trainer_id': schedule_item.get('trainer_id'),
+                    'action': 'cancelled',
+                    'action_by': user['id'],
+                    'notes': f'관리자에 의해 수업 취소됨'
+                }).execute()
+
+            elif new_status == '수업 완료':
+                # Mark assignment as completed
+                supabase.table('ot_assignments').update({
+                    'status': 'completed'
+                }).eq('id', ot_assignment_id).execute()
+
+                # Log completion
+                supabase.table('ot_assignment_history').insert({
+                    'member_id': member_id,
+                    'trainer_id': schedule_item.get('trainer_id'),
+                    'action': 'completed',
+                    'action_by': user['id'],
+                    'notes': f'관리자에 의해 수업 완료 처리'
+                }).execute()
+
+                # Update member OT status
+                update_ot_member_status(member_id)
 
         return jsonify({'success': True})
     except Exception as e:
@@ -1871,6 +2206,20 @@ def quick_add_schedule():
             target_member_id = session_info['available_entry']['id']
 
     try:
+        # Check if there's an existing schedule at this time slot
+        existing_schedule = supabase.table('schedules').select('id, status').eq(
+            'trainer_id', trainer_id
+        ).eq('schedule_date', schedule_date).eq('start_time', start_time).execute()
+
+        if existing_schedule.data:
+            existing = existing_schedule.data[0]
+            if existing['status'] == '수업 취소':
+                # Delete the cancelled schedule to make room for the new one
+                supabase.table('schedules').delete().eq('id', existing['id']).execute()
+            else:
+                # There's an active schedule at this time
+                return jsonify({'success': False, 'error': '해당 시간에 이미 스케줄이 있습니다.'}), 409
+
         schedule_data = {
             'trainer_id': trainer_id,
             'member_id': target_member_id,
@@ -2598,16 +2947,16 @@ def salary():
 
     if user['role'] == 'trainer':
         # Trainer sees only their own data - current month
-        members_response = supabase.table('members').select('id, sessions, unit_price, channel, refund_status, created_at').eq('trainer_id', user['id']).gte('created_at', month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
+        members_response = supabase.table('members').select('id, sessions, unit_price, channel, payment_method, refund_status, created_at').eq('trainer_id', user['id']).gte('created_at', month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
         members_list = members_response.data if members_response.data else []
 
         # Get 6-month data for master trainer bonus
-        six_month_response = supabase.table('members').select('sessions, unit_price, channel, refund_status').eq('trainer_id', user['id']).gte('created_at', six_month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
+        six_month_response = supabase.table('members').select('sessions, unit_price, channel, payment_method, refund_status').eq('trainer_id', user['id']).gte('created_at', six_month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
         six_month_members = six_month_response.data if six_month_response.data else []
 
         # Get all members for this trainer (for lesson fee calculation)
-        all_members_response = supabase.table('members').select('id, unit_price').eq('trainer_id', user['id']).execute()
-        all_members = {m['id']: m['unit_price'] for m in (all_members_response.data or [])}
+        all_members_response = supabase.table('members').select('id, unit_price, payment_method').eq('trainer_id', user['id']).execute()
+        all_members = {m['id']: {'unit_price': m['unit_price'], 'payment_method': m.get('payment_method')} for m in (all_members_response.data or [])}
 
         # Get completed schedules for this month
         schedules_response = supabase.table('schedules').select('member_id, work_type, status').eq('trainer_id', user['id']).eq('status', '수업 완료').gte('schedule_date', month_start.isoformat()).lt('schedule_date', next_month.isoformat()).execute()
@@ -2617,23 +2966,29 @@ def salary():
         refund_response = supabase.table('members').select('refund_amount').eq('trainer_id', user['id']).eq('refund_status', 'refunded').eq('refund_applied_month', month_start.isoformat()).execute()
         refund_deductions = sum(m.get('refund_amount', 0) or 0 for m in (refund_response.data or []))
 
-        # Calculate sales with 50% for WI channel (refunded members included with proportional amount)
-        sales = sum(
-            m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-            for m in members_list
-        )
-        six_month_sales = sum(
-            m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-            for m in six_month_members
-        )
+        # Calculate sales with 50% for WI channel, 10% deduction for 카드/계좌이체
+        def calc_member_sales(m):
+            amount = m['sessions'] * m['unit_price']
+            if m.get('payment_method') in ['카드', '계좌이체']:
+                amount = amount * 0.9
+            if m.get('channel') == 'WI':
+                amount = amount * 0.5
+            return amount
+
+        sales = sum(calc_member_sales(m) for m in members_list)
+        six_month_sales = sum(calc_member_sales(m) for m in six_month_members)
         incentive = calculate_incentive(sales, salary_settings)
         master_bonus = calculate_master_trainer_bonus(six_month_sales, salary_settings)
 
-        # Calculate lesson fees
+        # Calculate lesson fees (10% deduction for 카드/계좌이체)
         lesson_fee_base_main = 0
         lesson_fee_base_other = 0
         for schedule in schedules_list:
-            member_unit_price = all_members.get(schedule['member_id'], 0)
+            member_data = all_members.get(schedule['member_id'], {'unit_price': 0, 'payment_method': None})
+            member_unit_price = member_data['unit_price']
+            # Apply 10% deduction for 카드/계좌이체
+            if member_data.get('payment_method') in ['카드', '계좌이체']:
+                member_unit_price = member_unit_price * 0.9
             if schedule['work_type'] == '근무내':
                 lesson_fee_base_main += member_unit_price
             else:
@@ -2711,15 +3066,15 @@ def salary():
 
         # Get all members created in the selected month for these trainers
         if trainer_ids:
-            members_response = supabase.table('members').select('id, trainer_id, sessions, unit_price, channel, refund_status, created_at').in_('trainer_id', trainer_ids).gte('created_at', month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
+            members_response = supabase.table('members').select('id, trainer_id, sessions, unit_price, channel, payment_method, refund_status, created_at').in_('trainer_id', trainer_ids).gte('created_at', month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
             members_list = members_response.data if members_response.data else []
 
             # Get 6-month data for master trainer bonus
-            six_month_response = supabase.table('members').select('trainer_id, sessions, unit_price, channel, refund_status').in_('trainer_id', trainer_ids).gte('created_at', six_month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
+            six_month_response = supabase.table('members').select('trainer_id, sessions, unit_price, channel, payment_method, refund_status').in_('trainer_id', trainer_ids).gte('created_at', six_month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
             six_month_members = six_month_response.data if six_month_response.data else []
 
             # Get all members for these trainers (for lesson fee calculation)
-            all_members_response = supabase.table('members').select('id, trainer_id, unit_price').in_('trainer_id', trainer_ids).execute()
+            all_members_response = supabase.table('members').select('id, trainer_id, unit_price, payment_method').in_('trainer_id', trainer_ids).execute()
             all_members_list = all_members_response.data if all_members_response.data else []
 
             # Get completed schedules for this month
@@ -2739,42 +3094,55 @@ def salary():
             schedules_list = []
             trainer_refund_deductions = {}
 
-        # Build member unit_price lookup by trainer
-        trainer_member_prices = {}
+        # Build member info lookup by trainer (unit_price and payment_method)
+        trainer_member_info = {}
         for m in all_members_list:
             tid = m['trainer_id']
-            if tid not in trainer_member_prices:
-                trainer_member_prices[tid] = {}
-            trainer_member_prices[tid][m['id']] = m['unit_price']
+            if tid not in trainer_member_info:
+                trainer_member_info[tid] = {}
+            trainer_member_info[tid][m['id']] = {
+                'unit_price': m['unit_price'],
+                'payment_method': m.get('payment_method')
+            }
 
-        # Calculate sales (매출) per trainer - current month (50% for WI, refunded included with proportional amount)
+        # Calculate sales (매출) per trainer - current month (50% for WI, 10% deduction for 카드/계좌이체)
         trainer_sales = {}
         for member in members_list:
             tid = member['trainer_id']
             contract_amount = member['sessions'] * member['unit_price']
+            # Apply 10% deduction for 카드/계좌이체
+            if member.get('payment_method') in ['카드', '계좌이체']:
+                contract_amount = contract_amount * 0.9
             # Apply 50% if channel is WI
             if member.get('channel') == 'WI':
                 contract_amount = contract_amount * 0.5
             trainer_sales[tid] = trainer_sales.get(tid, 0) + contract_amount
 
-        # Calculate 6-month sales per trainer (50% for WI, refunded included with proportional amount)
+        # Calculate 6-month sales per trainer (50% for WI, 10% deduction for 카드/계좌이체)
         trainer_six_month_sales = {}
         for member in six_month_members:
             tid = member['trainer_id']
             contract_amount = member['sessions'] * member['unit_price']
+            # Apply 10% deduction for 카드/계좌이체
+            if member.get('payment_method') in ['카드', '계좌이체']:
+                contract_amount = contract_amount * 0.9
             # Apply 50% if channel is WI
             if member.get('channel') == 'WI':
                 contract_amount = contract_amount * 0.5
             trainer_six_month_sales[tid] = trainer_six_month_sales.get(tid, 0) + contract_amount
 
-        # Calculate lesson fee base per trainer and count classes
+        # Calculate lesson fee base per trainer and count classes (10% deduction for 카드/계좌이체)
         trainer_lesson_fees = {}
         trainer_class_counts = {}
         for schedule in schedules_list:
             tid = schedule['trainer_id']
             member_id = schedule['member_id']
             work_type = schedule['work_type']
-            unit_price = trainer_member_prices.get(tid, {}).get(member_id, 0)
+            member_info = trainer_member_info.get(tid, {}).get(member_id, {'unit_price': 0, 'payment_method': None})
+            unit_price = member_info['unit_price']
+            # Apply 10% deduction for 카드/계좌이체
+            if member_info.get('payment_method') in ['카드', '계좌이체']:
+                unit_price = unit_price * 0.9
 
             if tid not in trainer_lesson_fees:
                 trainer_lesson_fees[tid] = {'main': 0, 'other': 0}
@@ -3343,11 +3711,26 @@ def ot_members():
     # Get all OT assignments for these members
     member_ids = [m['id'] for m in ot_members_data]
     all_assignments = []
+    all_schedules = []
     if member_ids:
         assignments_response = supabase.table('ot_assignments').select(
             '*, trainer:users!ot_assignments_trainer_id_fkey(id, name)'
         ).in_('member_id', member_ids).order('session_number').execute()
         all_assignments = assignments_response.data if assignments_response.data else []
+
+        # Get all schedules for these assignments to check schedule status
+        assignment_ids = [a['id'] for a in all_assignments]
+        if assignment_ids:
+            schedules_response = supabase.table('schedules').select(
+                'id, ot_assignment_id, status, schedule_date'
+            ).in_('ot_assignment_id', assignment_ids).execute()
+            all_schedules = schedules_response.data if schedules_response.data else []
+
+    # Build schedule lookup by assignment_id
+    schedule_by_assignment = {}
+    for sch in all_schedules:
+        if sch.get('ot_assignment_id'):
+            schedule_by_assignment[sch['ot_assignment_id']] = sch
 
     # Add assignment info to each member
     now = datetime.now(KST)
@@ -3358,13 +3741,35 @@ def ot_members():
         completed_count = len([a for a in member['assignments'] if a['status'] == 'completed'])
         member['completed_sessions'] = completed_count
 
-        # Calculate remaining to assign: total sessions - number of assignments created
-        total_sessions = member.get('sessions', 1)
-        assigned_count = len(member['assignments'])
-        member['remaining_to_assign'] = max(0, total_sessions - assigned_count)
+        # Calculate display session numbers (only increment on completed)
+        display_completed_count = 0
+        for assignment in member['assignments']:
+            # Check schedule status
+            schedule = schedule_by_assignment.get(assignment['id'])
+            if schedule and schedule['status'] == '수업 계획':
+                assignment['schedule_status'] = 'scheduled'
+                assignment['schedule_date'] = schedule['schedule_date']
+            else:
+                assignment['schedule_status'] = 'not_scheduled'
+                assignment['schedule_date'] = None
 
-        # Get next session number
-        member['next_session_number'] = assigned_count + 1
+            if assignment['status'] == 'completed':
+                display_completed_count += 1
+                assignment['display_session_number'] = display_completed_count
+            elif assignment['status'] in ['cancelled', 'returned']:
+                # Cancelled/returned show the number they would have been
+                assignment['display_session_number'] = display_completed_count + 1
+            else:
+                # Active assignments (assigned/scheduled) show next number after completed
+                assignment['display_session_number'] = display_completed_count + 1
+
+        # Calculate remaining to assign: total sessions - active/completed assignments (exclude returned/cancelled)
+        total_sessions = member.get('sessions', 1)
+        active_assigned_count = len([a for a in member['assignments'] if a['status'] not in ['returned', 'cancelled']])
+        member['remaining_to_assign'] = max(0, total_sessions - active_assigned_count)
+
+        # Get next session number (for new assignments)
+        member['next_session_number'] = len(member['assignments']) + 1
 
         # Calculate earliest deadline from active assignments (assigned or scheduled)
         active_assignments = [a for a in member['assignments'] if a['status'] in ['assigned', 'scheduled']]
@@ -3896,7 +4301,7 @@ def get_ot_member_detail(member_id):
         # Get all assignments
         assignments_response = supabase.table('ot_assignments').select(
             '*, trainer:users!ot_assignments_trainer_id_fkey(id, name)'
-        ).eq('member_id', member_id).order('session_number').execute()
+        ).eq('member_id', member_id).order('assigned_at').execute()
         assignments = assignments_response.data or []
 
         # Get assignment history
@@ -3905,22 +4310,48 @@ def get_ot_member_detail(member_id):
         ).eq('member_id', member_id).order('action_at', desc=True).execute()
         history = history_response.data or []
 
-        # Check schedule status for each assignment
+        # Check schedule status for each assignment and calculate display session numbers
+        completed_count = 0
         for assignment in assignments:
-            schedule_response = supabase.table('schedules').select('id, status, schedule_date').eq(
-                'member_id', member_id
-            ).eq('trainer_id', assignment['trainer_id']).execute()
+            # Check if assignment is cancelled
+            if assignment['status'] == 'cancelled':
+                assignment['schedule_status'] = 'cancelled'
+                assignment['schedule_date'] = None
+                # Cancelled sessions show next number (what it would have been)
+                assignment['display_session_number'] = completed_count + 1
+            elif assignment['status'] == 'completed':
+                completed_count += 1
+                assignment['schedule_status'] = 'completed'
+                assignment['display_session_number'] = completed_count
+                # Get schedule date
+                schedule_response = supabase.table('schedules').select('schedule_date').eq(
+                    'ot_assignment_id', assignment['id']
+                ).eq('status', '수업 완료').execute()
+                if schedule_response.data:
+                    assignment['schedule_date'] = schedule_response.data[0]['schedule_date']
+                else:
+                    assignment['schedule_date'] = None
+            elif assignment['status'] == 'returned':
+                assignment['schedule_status'] = 'returned'
+                assignment['schedule_date'] = None
+                # Returned sessions show next number (what it would have been)
+                assignment['display_session_number'] = completed_count + 1
+            else:
+                # assigned or scheduled
+                schedule_response = supabase.table('schedules').select('id, status, schedule_date').eq(
+                    'ot_assignment_id', assignment['id']
+                ).execute()
 
-            assignment['schedule_status'] = 'not_scheduled'
-            assignment['schedule_date'] = None
-            for sch in (schedule_response.data or []):
-                if sch['status'] == '수업 완료':
-                    assignment['schedule_status'] = 'completed'
-                    assignment['schedule_date'] = sch['schedule_date']
-                    break
-                elif sch['status'] == '수업 계획':
-                    assignment['schedule_status'] = 'scheduled'
-                    assignment['schedule_date'] = sch['schedule_date']
+                assignment['schedule_status'] = 'not_scheduled'
+                assignment['schedule_date'] = None
+                for sch in (schedule_response.data or []):
+                    if sch['status'] == '수업 계획':
+                        assignment['schedule_status'] = 'scheduled'
+                        assignment['schedule_date'] = sch['schedule_date']
+                        break
+
+                # Pending sessions show next number based on completed count
+                assignment['display_session_number'] = completed_count + 1
 
         return jsonify({
             'success': True,

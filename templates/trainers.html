@@ -37,6 +37,7 @@
                         <th>이름</th>
                         <th>이메일</th>
                         <th>지점</th>
+                        <th>근무시간</th>
                         <th>등록일</th>
                         {% if user.role == 'main_admin' %}
                         <th>상태</th>
@@ -53,6 +54,17 @@
                         <td><strong>{{ trainer.name }}</strong></td>
                         <td>{{ trainer.email }}</td>
                         <td>{{ trainer.branch.name if trainer.branch else '-' }}</td>
+                        <td>
+                            {% if trainer.working_hours_start and trainer.working_hours_end %}
+                            <span class="badge bg-info">{{ trainer.working_hours_start[:5] }} - {{ trainer.working_hours_end[:5] }}</span>
+                            {% else %}
+                            <span class="text-muted">미설정</span>
+                            {% endif %}
+                            <button type="button" class="btn btn-sm btn-outline-secondary ms-1"
+                                    onclick="openWorkingHoursModal('{{ trainer.id }}', '{{ trainer.name }}', '{{ trainer.working_hours_start or '' }}', '{{ trainer.working_hours_end or '' }}')">
+                                <i class="bi bi-pencil"></i>
+                            </button>
+                        </td>
                         <td>{{ trainer.created_at[:10] }}</td>
                         {% if user.role == 'main_admin' %}
                         <td>
@@ -87,7 +99,7 @@
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="{{ 7 if user.role == 'main_admin' else 5 }}" class="text-center text-muted py-4">등록된 트레이너가 없습니다.</td>
+                        <td colspan="{{ 8 if user.role == 'main_admin' else 6 }}" class="text-center text-muted py-4">등록된 트레이너가 없습니다.</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -95,4 +107,105 @@
         </div>
     </div>
 </div>
+
+<!-- Working Hours Edit Modal -->
+<div class="modal fade" id="workingHoursModal" tabindex="-1" aria-labelledby="workingHoursModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="workingHoursModalLabel">
+                    <i class="bi bi-clock me-1"></i> 근무시간 설정
+                </h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    <span id="modalTrainerName" class="fw-bold"></span>님의 근무시간
+                </p>
+                <input type="hidden" id="modalTrainerId">
+                <div class="mb-3">
+                    <label class="form-label">시작 시간</label>
+                    <input type="time" class="form-control" id="workingHoursStart" step="3600">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">종료 시간</label>
+                    <input type="time" class="form-control" id="workingHoursEnd" step="3600">
+                </div>
+                <div class="alert alert-info py-2 small">
+                    <i class="bi bi-info-circle me-1"></i>
+                    평일(월~금) 근무시간 내 수업은 자동으로 Main으로 분류됩니다.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary btn-sm" id="saveWorkingHoursBtn" onclick="saveWorkingHours()">
+                    저장
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let workingHoursModal = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    workingHoursModal = new bootstrap.Modal(document.getElementById('workingHoursModal'));
+});
+
+function openWorkingHoursModal(trainerId, trainerName, startTime, endTime) {
+    document.getElementById('modalTrainerId').value = trainerId;
+    document.getElementById('modalTrainerName').textContent = trainerName;
+    document.getElementById('workingHoursStart').value = startTime ? startTime.substring(0, 5) : '';
+    document.getElementById('workingHoursEnd').value = endTime ? endTime.substring(0, 5) : '';
+    workingHoursModal.show();
+}
+
+function saveWorkingHours() {
+    const trainerId = document.getElementById('modalTrainerId').value;
+    const startTime = document.getElementById('workingHoursStart').value;
+    const endTime = document.getElementById('workingHoursEnd').value;
+    const btn = document.getElementById('saveWorkingHoursBtn');
+
+    if (!startTime || !endTime) {
+        alert('시작 시간과 종료 시간을 모두 입력해주세요.');
+        return;
+    }
+
+    if (startTime >= endTime) {
+        alert('종료 시간은 시작 시간보다 늦어야 합니다.');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch(`/trainers/${trainerId}/working-hours`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            working_hours_start: startTime,
+            working_hours_end: endTime
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '저장에 실패했습니다.');
+            btn.disabled = false;
+            btn.innerHTML = '저장';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('저장 중 오류가 발생했습니다.');
+        btn.disabled = false;
+        btn.innerHTML = '저장';
+    });
+}
+</script>
 {% endblock %}
