@@ -15,8 +15,8 @@
                     </div>
 
                     <div class="mb-3">
-                        <label for="email" class="form-label">이메일 *</label>
-                        <input type="email" class="form-control" id="email" name="email" required>
+                        <label for="username" class="form-label">아이디 *</label>
+                        <input type="text" class="form-control" id="username" name="username" required>
                     </div>
 
                     <div class="mb-3">
@@ -35,6 +35,21 @@
                         </select>
                     </div>
                     {% endif %}
+
+                    <div class="mb-3">
+                        <label class="form-label">근무시간 <small class="text-muted">(선택사항 - 평일 자동 분류에 사용)</small></label>
+                        <div class="row">
+                            <div class="col">
+                                <label for="work_start_time" class="form-label small">시작</label>
+                                <input type="time" class="form-control" id="work_start_time" name="work_start_time">
+                            </div>
+                            <div class="col">
+                                <label for="work_end_time" class="form-label small">종료</label>
+                                <input type="time" class="form-control" id="work_end_time" name="work_end_time">
+                            </div>
+                        </div>
+                        <small class="text-muted">근무시간을 설정하면 평일 수업 완료 시 자동으로 근무내/근무외 분류됩니다.</small>
+                    </div>
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-primary">트레이너 등록</button>

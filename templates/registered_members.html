@@ -1,0 +1,350 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>회원 관리</h2>
+    <button type="button" class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addMemberModal">
+        + 새 회원 등록
+    </button>
+</div>
+
+<!-- Filter -->
+{% if user.role == 'main_admin' and branches %}
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="GET" class="row align-items-center">
+            <div class="col-auto">
+                <label class="col-form-label">지점 필터:</label>
+            </div>
+            <div class="col-auto">
+                <select name="branch_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">전체 지점</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if selected_branch_id == branch.id %}selected{% endif %}>
+                        {{ branch.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>이름</th>
+                        <th>아이디</th>
+                        <th>전화번호</th>
+                        <th>연령/성별</th>
+                        <th>등록 수업</th>
+                        <th>등록일</th>
+                        <th>관리</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for member in registered_members %}
+                    <tr>
+                        <td><strong>{{ member.name }}</strong></td>
+                        <td>{{ member.username }}</td>
+                        <td>{{ member.phone or '-' }}</td>
+                        <td>
+                            {% if member.age %}{{ member.age }}세{% endif %}
+                            {% if member.age and member.gender %}/{% endif %}
+                            {% if member.gender %}{{ member.gender }}{% endif %}
+                            {% if not member.age and not member.gender %}-{% endif %}
+                        </td>
+                        <td>
+                            {% if member.course_count > 0 %}
+                            <span class="badge bg-success">{{ member.course_count }}건</span>
+                            {% else %}
+                            <span class="text-muted">없음</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ member.created_at[:10] }}</td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ url_for('members') }}?search={{ member.name }}" class="btn btn-outline-primary btn-sm">
+                                    수업 보기
+                                </a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="7" class="text-center text-muted py-4">등록된 회원이 없습니다.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add Member Modal -->
+<div class="modal fade" id="addMemberModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-person-plus me-2"></i>새 회원 등록</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="addMemberForm">
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">이름 *</label>
+                            <input type="text" class="form-control" name="name" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">전화번호 *</label>
+                            <input type="tel" class="form-control" name="phone" placeholder="010-0000-0000" required
+                                   oninput="var n=this.value.replace(/[^\d]/g,'');this.value=n.length<=3?n:n.length<=7?n.slice(0,3)+'-'+n.slice(3):n.slice(0,3)+'-'+n.slice(3,7)+'-'+n.slice(7,11);">
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label class="form-label">아이디 (로그인) *</label>
+                            <input type="text" class="form-control" name="username" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">비밀번호 *</label>
+                            <input type="password" class="form-control" name="password" required>
+                        </div>
+                    </div>
+
+                    <div class="row mb-3">
+                        <div class="col-md-4">
+                            <label class="form-label">연령</label>
+                            <input type="number" class="form-control" name="age" min="1" max="120" placeholder="선택사항">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">성별</label>
+                            <select class="form-select" name="gender">
+                                <option value="">선택하세요</option>
+                                <option value="남">남</option>
+                                <option value="여">여</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label">직업</label>
+                            <input type="text" class="form-control" name="occupation" placeholder="선택사항">
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">특이사항</label>
+                        <textarea class="form-control" name="special_notes" rows="2" placeholder="선택사항"></textarea>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">인바디 기록</label>
+                        <div class="border rounded p-2 bg-light">
+                            <div id="inbodyPreview" class="d-flex flex-wrap gap-2 mb-2"></div>
+                            <input type="file" id="inbodyInput" accept="image/*" multiple style="display: none;">
+                            <input type="hidden" name="inbody_photos" id="inbody_photos">
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('inbodyInput').click()">
+                                <i class="bi bi-camera"></i> 사진 추가
+                            </button>
+                            <small class="text-muted ms-2">선택사항 (여러 장 가능)</small>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">회원 서명</label>
+                        <div class="border rounded p-2 bg-light">
+                            <canvas id="signatureCanvas" width="500" height="150" class="border bg-white w-100" style="touch-action: none;"></canvas>
+                        </div>
+                        <input type="hidden" name="signature" id="signature">
+                        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearSignature()">서명 지우기</button>
+                    </div>
+
+                    {% if user.role == 'main_admin' %}
+                    <div class="mb-3">
+                        <label class="form-label">지점</label>
+                        <select class="form-select" name="branch_id">
+                            <option value="">선택 안함</option>
+                            {% for branch in branches %}
+                            <option value="{{ branch.id }}">{{ branch.name }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary" id="saveMemberBtn" onclick="saveMember()">
+                    등록
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// InBody photos handling
+let inbodyPhotos = [];
+
+document.getElementById('inbodyInput').addEventListener('change', function(e) {
+    const files = Array.from(e.target.files);
+    files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            inbodyPhotos.push(event.target.result);
+            updateInbodyPreview();
+        };
+        reader.readAsDataURL(file);
+    });
+    e.target.value = '';
+});
+
+function updateInbodyPreview() {
+    const preview = document.getElementById('inbodyPreview');
+    preview.innerHTML = inbodyPhotos.map((photo, index) => `
+        <div class="position-relative" style="width: 80px; height: 80px;">
+            <img src="${photo}" class="rounded border" style="width: 100%; height: 100%; object-fit: cover;">
+            <button type="button" class="btn btn-danger btn-sm position-absolute top-0 end-0 p-0"
+                    style="width: 20px; height: 20px; font-size: 10px;" onclick="removeInbodyPhoto(${index})">
+                <i class="bi bi-x"></i>
+            </button>
+        </div>
+    `).join('');
+    document.getElementById('inbody_photos').value = JSON.stringify(inbodyPhotos);
+}
+
+function removeInbodyPhoto(index) {
+    inbodyPhotos.splice(index, 1);
+    updateInbodyPreview();
+}
+
+// Signature handling
+let signatureCanvas, signatureCtx, isDrawing = false, lastX = 0, lastY = 0;
+
+document.addEventListener('DOMContentLoaded', function() {
+    signatureCanvas = document.getElementById('signatureCanvas');
+    signatureCtx = signatureCanvas.getContext('2d');
+
+    signatureCtx.strokeStyle = '#000';
+    signatureCtx.lineWidth = 2;
+    signatureCtx.lineCap = 'round';
+    signatureCtx.lineJoin = 'round';
+    signatureCtx.fillStyle = '#fff';
+    signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+
+    signatureCanvas.addEventListener('mousedown', startDrawing);
+    signatureCanvas.addEventListener('mousemove', draw);
+    signatureCanvas.addEventListener('mouseup', stopDrawing);
+    signatureCanvas.addEventListener('mouseout', stopDrawing);
+    signatureCanvas.addEventListener('touchstart', startDrawing);
+    signatureCanvas.addEventListener('touchmove', draw);
+    signatureCanvas.addEventListener('touchend', stopDrawing);
+});
+
+function getPosition(e) {
+    const rect = signatureCanvas.getBoundingClientRect();
+    const scaleX = signatureCanvas.width / rect.width;
+    const scaleY = signatureCanvas.height / rect.height;
+    if (e.touches) {
+        return { x: (e.touches[0].clientX - rect.left) * scaleX, y: (e.touches[0].clientY - rect.top) * scaleY };
+    }
+    return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
+}
+
+function startDrawing(e) {
+    isDrawing = true;
+    const pos = getPosition(e);
+    lastX = pos.x;
+    lastY = pos.y;
+}
+
+function draw(e) {
+    if (!isDrawing) return;
+    e.preventDefault();
+    const pos = getPosition(e);
+    signatureCtx.beginPath();
+    signatureCtx.moveTo(lastX, lastY);
+    signatureCtx.lineTo(pos.x, pos.y);
+    signatureCtx.stroke();
+    lastX = pos.x;
+    lastY = pos.y;
+    document.getElementById('signature').value = signatureCanvas.toDataURL('image/png');
+}
+
+function stopDrawing() { isDrawing = false; }
+
+function clearSignature() {
+    signatureCtx.fillStyle = '#fff';
+    signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+    document.getElementById('signature').value = '';
+}
+
+// Save member
+function saveMember() {
+    const form = document.getElementById('addMemberForm');
+    const formData = new FormData(form);
+    const btn = document.getElementById('saveMemberBtn');
+
+    const name = formData.get('name');
+    const username = formData.get('username');
+    const password = formData.get('password');
+    const phone = formData.get('phone');
+
+    if (!name || !username || !password || !phone) {
+        alert('이름, 아이디, 비밀번호, 전화번호를 입력해주세요.');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch('/registered-members/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: name,
+            username: username,
+            password: password,
+            phone: phone,
+            age: formData.get('age') || null,
+            gender: formData.get('gender') || null,
+            occupation: formData.get('occupation') || null,
+            special_notes: formData.get('special_notes') || null,
+            inbody_photos: inbodyPhotos.length > 0 ? inbodyPhotos : null,
+            signature: formData.get('signature') || null,
+            branch_id: formData.get('branch_id') || null
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '등록에 실패했습니다.');
+            btn.disabled = false;
+            btn.innerHTML = '등록';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('등록 중 오류가 발생했습니다.');
+        btn.disabled = false;
+        btn.innerHTML = '등록';
+    });
+}
+
+// Reset form when modal closes
+document.getElementById('addMemberModal').addEventListener('hidden.bs.modal', function() {
+    document.getElementById('addMemberForm').reset();
+    inbodyPhotos = [];
+    document.getElementById('inbodyPreview').innerHTML = '';
+    document.getElementById('inbody_photos').value = '';
+    clearSignature();
+});
+</script>
+{% endblock %}

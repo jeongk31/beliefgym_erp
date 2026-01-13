@@ -4,24 +4,22 @@
 <div class="schedule-header d-flex justify-content-between align-items-center mb-4">
     <h2 class="mb-0">스케줄 관리</h2>
     {% if user.role == 'trainer' or selected_trainer_id %}
-    <div class="btn-group schedule-action-btns">
-        <button type="button" class="btn btn-primary" id="addModeBtn" onclick="enterAddMode()">
+    <div class="d-flex gap-1 schedule-action-btns">
+        <button type="button" class="btn btn-sm btn-primary" id="addModeBtn" onclick="enterAddMode()">
             <i class="bi bi-plus-lg d-md-none"></i>
-            <span class="d-none d-md-inline">+ 스케줄 추가</span>
+            <span class="d-none d-md-inline">+ 추가</span>
             <span class="d-md-none">추가</span>
         </button>
-        <button type="button" class="btn btn-outline-danger" id="deleteModeBtn" onclick="enterDeleteMode()">
+        <button type="button" class="btn btn-sm btn-outline-danger" id="deleteModeBtn" onclick="enterDeleteMode()">
             <i class="bi bi-dash-lg d-md-none"></i>
-            <span class="d-none d-md-inline">- 스케줄 삭제</span>
+            <span class="d-none d-md-inline">- 삭제</span>
             <span class="d-md-none">삭제</span>
         </button>
-        {% if user.role in ['main_admin', 'branch_admin'] %}
-        <button type="button" class="btn btn-outline-secondary" id="editModeBtn" onclick="enterEditMode()">
-            <i class="bi bi-pencil d-md-none"></i>
-            <span class="d-none d-md-inline">스케줄 수정</span>
-            <span class="d-md-none">수정</span>
+        <button type="button" class="btn btn-sm btn-outline-secondary" id="editModeBtn" onclick="enterEditMode()">
+            <i class="bi bi-arrows-move d-md-none"></i>
+            <span class="d-none d-md-inline">이동</span>
+            <span class="d-md-none">이동</span>
         </button>
-        {% endif %}
     </div>
     {% endif %}
 </div>
@@ -30,6 +28,7 @@
 <!-- Status Legend -->
 <div class="mb-3 status-legend">
     <span class="badge bg-warning text-dark">수업 계획</span>
+    <span class="badge bg-info">서명 대기</span>
     <span class="badge bg-success">수업 완료</span>
     <span class="badge bg-danger">수업 취소</span>
 </div>
@@ -78,16 +77,15 @@
     </div>
 </div>
 
-{% if user.role in ['main_admin', 'branch_admin'] %}
-<!-- Edit Mode Panel (Hidden by default) - admin only -->
+<!-- Edit/Move Mode Panel (Hidden by default) -->
 <div class="card mb-3 border-secondary" id="editModePanel" style="display: none;">
     <div class="card-body py-3">
         <div class="row align-items-center">
             <div class="col-auto">
-                <span class="badge bg-secondary fs-6">스케줄 수정 모드</span>
+                <span class="badge bg-secondary fs-6">스케줄 이동 모드</span>
             </div>
             <div class="col">
-                <span class="text-secondary">수정할 스케줄을 클릭하세요</span>
+                <span class="text-secondary">스케줄을 드래그하여 이동하세요 (계획 상태만 가능)</span>
             </div>
             <div class="col-auto ms-auto">
                 <button type="button" class="btn btn-secondary" onclick="exitMode()">완료</button>
@@ -96,32 +94,34 @@
     </div>
 </div>
 {% endif %}
-{% endif %}
 
 <!-- OT Assignments Panel (for trainers) -->
 {% if user.role == 'trainer' and ot_assignments %}
-<div class="bg-info bg-opacity-10 border border-info rounded mb-3 px-2 py-1 d-flex align-items-center">
-    <span class="text-info fw-bold me-2 flex-shrink-0" style="font-size: 0.85rem;">OT:</span>
-    <div class="d-flex align-items-stretch gap-1 flex-nowrap overflow-auto" style="scrollbar-width: thin;">
+<div class="ot-panel rounded mb-3 px-3 py-2 d-flex align-items-center" style="background-color: #475569; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);">
+    <span class="text-white fw-bold me-3 flex-shrink-0" style="font-size: 0.9rem;">
+        <i class="bi bi-people-fill me-1"></i>OT 배정
+    </span>
+    <div class="d-flex align-items-stretch gap-2 flex-nowrap overflow-auto py-1" style="scrollbar-width: thin;">
         {% for ot in ot_assignments %}
-        <div class="ot-assignment-card d-flex flex-column align-items-center px-2 py-1 rounded flex-shrink-0 {% if ot.days_remaining is not none and ot.days_remaining < 2 %}bg-danger bg-opacity-10 border border-danger{% elif ot.days_remaining is not none and ot.days_remaining < 5 %}bg-warning bg-opacity-10 border border-warning{% else %}bg-success bg-opacity-10 border border-success{% endif %}"
+        <div class="ot-assignment-card d-flex flex-column align-items-center px-3 py-2 rounded flex-shrink-0 {% if ot.days_remaining is not none and ot.days_remaining < 2 %}ot-urgent{% elif ot.days_remaining is not none and ot.days_remaining < 5 %}ot-warning{% else %}ot-normal{% endif %}"
              data-assignment-id="{{ ot.id }}"
              data-member-id="{{ ot.member.id }}"
              data-member-name="{{ ot.member.member_name }}"
              data-session-number="{{ ot.session_number }}"
+             data-extended="{{ 'true' if ot.extended else 'false' }}"
              onclick="selectOtAssignment(this)"
-             style="cursor: pointer; min-width: 50px;">
-            <span class="fw-bold" style="font-size: 0.75rem;">{{ ot.member.member_name }}</span>
-            <div class="d-flex align-items-center gap-1" style="font-size: 0.65rem;">
-                <span class="badge {% if ot.session_number == 1 %}bg-success{% elif ot.session_number == 2 %}bg-primary{% else %}bg-warning text-dark{% endif %}" style="font-size: 0.6rem; padding: 2px 4px;">
+             style="cursor: pointer; min-width: 70px;">
+            <span class="fw-bold text-dark" style="font-size: 0.8rem;">{{ ot.member.member_name }}</span>
+            <div class="d-flex align-items-center gap-1 mt-1" style="font-size: 0.65rem;">
+                <span class="badge" style="font-size: 0.6rem; padding: 2px 6px; {% if ot.session_number == 1 %}background-color: #276749;{% elif ot.session_number == 2 %}background-color: #1a365d;{% else %}background-color: #c05621;{% endif %} color: white;">
                     {{ ot.session_number }}차
                 </span>
                 {% if ot.days_remaining is not none %}
-                <span class="{% if ot.days_remaining < 2 %}text-danger fw-bold{% elif ot.days_remaining < 5 %}text-warning{% else %}text-success{% endif %}">
+                <span class="{% if ot.days_remaining < 2 %}text-danger fw-bold{% elif ot.days_remaining < 5 %}text-warning{% else %}text-success{% endif %}" style="font-size: 0.65rem;">
                     {% if ot.days_remaining < 0 %}{{ ot.days_remaining|abs }}일↑{% elif ot.days_remaining == 0 %}오늘{% else %}{{ ot.days_remaining }}일{% endif %}
                 </span>
                 {% endif %}
-                {% if ot.extended %}<span class="badge bg-secondary" style="font-size: 0.55rem; padding: 1px 3px;">연장</span>{% endif %}
+                {% if ot.extended %}<span class="badge" style="font-size: 0.55rem; padding: 1px 4px; background-color: #4a5568; color: white;">연장</span>{% endif %}
             </div>
         </div>
         {% endfor %}
@@ -131,14 +131,14 @@
 
 <!-- OT Add Mode Panel (Hidden by default) -->
 {% if user.role == 'trainer' %}
-<div class="card mb-3 border-info" id="otAddModePanel" style="display: none;">
-    <div class="card-body py-3">
+<div class="card mb-3" id="otAddModePanel" style="display: none; border: 2px solid #0369a1;">
+    <div class="card-body py-3" style="background-color: #f0f9ff;">
         <div class="row align-items-center">
             <div class="col-auto">
-                <span class="badge bg-info fs-6">OT 스케줄 추가 모드</span>
+                <span class="badge fs-6" style="background-color: #0369a1; color: white;">OT 스케줄 추가 모드</span>
             </div>
             <div class="col-auto" id="otAddModeIndicator">
-                <span class="text-info fw-bold">
+                <span class="fw-bold" style="color: #0369a1;">
                     <span id="selectedOtMemberName">OT 회원을 선택하세요</span>
                 </span>
             </div>
@@ -235,12 +235,13 @@
                         {% for day in week_days %}
                         {% set schedule = schedule_grid[day.date][time_slot] %}
                         {% set status = schedule.status if schedule and schedule.status else '수업 계획' %}
-                        {% set is_locked = (status in ['수업 완료', '수업 취소']) or (day.date < selected_date) %}
-                        <td class="schedule-cell {% if schedule %}has-schedule status-{{ 'planned' if status == '수업 계획' else 'completed' if status == '수업 완료' else 'cancelled' }}{% endif %}"
+                        {% set is_locked = (status in ['수업 완료', '수업 취소', '트레이너 확인']) or (day.date < selected_date) %}
+                        <td class="schedule-cell {% if schedule %}has-schedule status-{{ 'planned' if status == '수업 계획' else 'confirmed' if status == '트레이너 확인' else 'completed' if status == '수업 완료' else 'cancelled' }}{% endif %}"
                             data-date="{{ day.date }}" data-time="{{ time_slot }}"
                             {% if schedule %}data-schedule-id="{{ schedule.id }}" data-status="{{ status }}" data-is-past="{{ 'true' if day.date < selected_date else 'false' }}" data-is-locked="{{ 'true' if is_locked else 'false' }}"{% endif %}>
                             {% if schedule %}
                             <div class="schedule-item {% if status == '수업 계획' %}clickable{% endif %}"
+                                 draggable="false"
                                  data-schedule-id="{{ schedule.id }}"
                                  data-member-name="{{ schedule.member.display_name or schedule.member.member_name }}"
                                  data-schedule-date="{{ schedule.schedule_date }}"
@@ -248,11 +249,11 @@
                                  data-end-time="{{ schedule.end_time[:5] }}"
                                  data-status="{{ status }}"
                                  data-work-type="{{ schedule.work_type or '' }}"
-                                 onclick="handleScheduleClick(this)">
+                                 onclick="if (!document.body.classList.contains('add-mode') && !document.body.classList.contains('delete-mode') && !document.body.classList.contains('edit-mode') && '{{ status }}' === '수업 계획') { handleScheduleClick(this); }">
                                 <div class="schedule-name">{{ schedule.member.display_name or schedule.member.member_name }}</div>
                                 <div class="schedule-badges">
-                                    <span class="schedule-status {% if status == '수업 계획' %}status-planned{% elif status == '수업 완료' %}status-completed{% else %}status-cancelled{% endif %}">
-                                        {% if status == '수업 계획' %}계획{% elif status == '수업 완료' %}완료{% else %}취소{% endif %}
+                                    <span class="schedule-status {% if status == '수업 계획' %}status-planned{% elif status == '트레이너 확인' %}status-confirmed{% elif status == '수업 완료' %}status-completed{% else %}status-cancelled{% endif %}">
+                                        {% if status == '수업 계획' %}계획{% elif status == '트레이너 확인' %}서명{% elif status == '수업 완료' %}완료{% else %}취소{% endif %}
                                     </span>
                                     {% if schedule.work_type %}
                                     <span class="schedule-work-type">{{ 'M' if schedule.work_type == '근무내' else '외' }}</span>
@@ -293,22 +294,41 @@
 {% endif %}
 
 <style>
-/* OT Panel scrollbar styling */
+/* OT Panel styling */
+.ot-assignment-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    transition: all 0.2s ease;
+}
 .ot-assignment-card:hover {
-    transform: scale(1.02);
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
 }
 .ot-assignment-card.selected {
-    box-shadow: 0 0 0 2px #0d6efd;
+    box-shadow: 0 0 0 3px #0369a1, 0 4px 12px rgba(0,0,0,0.15);
+    border-color: #0369a1;
+}
+.ot-assignment-card.ot-urgent {
+    background-color: #fef2f2;
+    border-color: #fecaca;
+}
+.ot-assignment-card.ot-warning {
+    background-color: #fffbeb;
+    border-color: #fde68a;
+}
+.ot-assignment-card.ot-normal {
+    background-color: #f0fdf4;
+    border-color: #bbf7d0;
 }
 .overflow-auto::-webkit-scrollbar {
     height: 4px;
 }
 .overflow-auto::-webkit-scrollbar-track {
-    background: transparent;
+    background: rgba(255,255,255,0.2);
+    border-radius: 4px;
 }
 .overflow-auto::-webkit-scrollbar-thumb {
-    background: #0dcaf0;
+    background: rgba(255,255,255,0.5);
     border-radius: 4px;
 }
 
@@ -329,6 +349,9 @@
 }
 .schedule-cell.status-planned {
     background-color: #fff3cd;
+}
+.schedule-cell.status-confirmed {
+    background-color: #cfe2ff;
 }
 .schedule-cell.status-completed {
     background-color: #d1e7dd;
@@ -493,6 +516,32 @@ body.delete-mode .schedule-item.clickable {
     left: 50%;
     transform: translate(-50%, -50%);
     z-index: 20;
+}
+
+/* ========== DRAG AND DROP STYLES ========== */
+.schedule-item.draggable {
+    cursor: grab;
+}
+.schedule-item.draggable:active {
+    cursor: grabbing;
+}
+.schedule-item.dragging {
+    opacity: 0.5;
+    cursor: grabbing;
+}
+.schedule-cell.drop-target {
+    background-color: #e7f3ff !important;
+    border: 2px dashed #0d6efd !important;
+}
+.schedule-cell.drag-over {
+    background-color: #cfe2ff !important;
+    border: 2px solid #0d6efd !important;
+}
+/* Hide drag in add/delete/edit mode */
+body.add-mode .schedule-item.draggable,
+body.delete-mode .schedule-item.draggable,
+body.edit-mode .schedule-item.draggable {
+    cursor: pointer;
 }
 
 /* ========== MOBILE RESPONSIVE STYLES ========== */
@@ -765,6 +814,9 @@ const trainerWorkingHours = {
     end: '{{ trainer_working_hours.end or "" }}'
 };
 
+// Holidays for the current week (treated like weekends)
+const weekHolidays = {{ week_holidays | tojson }};
+
 function filterByBranch(branchId) {
     // When branch changes, clear trainer selection and reload
     const url = new URL(window.location);
@@ -830,7 +882,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     } else if (savedMode === 'delete') {
         enterDeleteMode(true); // true = restoring
-    } else if (savedMode === 'edit' && isAdmin) {
+    } else if (savedMode === 'edit') {
         enterEditMode(true); // true = restoring
     }
 });
@@ -856,13 +908,14 @@ function enterDeleteMode(restoring = false) {
 }
 
 function enterEditMode(restoring = false) {
-    if (!isAdmin) return;
     exitMode(true); // silent exit
     document.body.classList.add('edit-mode');
     const editPanel = document.getElementById('editModePanel');
     if (editPanel) editPanel.style.display = 'block';
     const editBtn = document.getElementById('editModeBtn');
     if (editBtn) editBtn.classList.add('active');
+    // Enable drag and drop in edit mode
+    enableDragMode();
     if (!restoring) {
         sessionStorage.setItem('scheduleMode', 'edit');
     }
@@ -882,6 +935,8 @@ function exitMode(silent = false) {
     if (editBtn) editBtn.classList.remove('active');
     document.getElementById('selectedMember').value = '';
     document.getElementById('addModeIndicator').style.display = 'none';
+    // Disable drag and drop when exiting any mode
+    disableDragMode();
 
     // Reset OT selection
     document.querySelectorAll('.ot-assignment-card').forEach(card => {
@@ -916,11 +971,41 @@ function enterOtAddMode() {
 }
 
 function selectOtAssignment(element) {
-    // Only work in OT add mode
-    if (!document.body.classList.contains('ot-add-mode')) {
-        enterOtAddMode();
+    // If already in OT add mode, just select the assignment
+    if (document.body.classList.contains('ot-add-mode')) {
+        doSelectOtAssignment(element);
+        return;
     }
 
+    // Otherwise, show the option modal first
+    const assignmentId = element.dataset.assignmentId;
+    const memberName = element.dataset.memberName;
+    const sessionNumber = element.dataset.sessionNumber;
+    const extended = element.dataset.extended === 'true';
+
+    // Store the element for later
+    window.pendingOtElement = element;
+
+    // Populate the modal
+    document.getElementById('otOptionMemberName').textContent = memberName;
+    document.getElementById('otOptionSessionNumber').textContent = sessionNumber + '차';
+
+    // Disable extend button if already extended
+    const extendBtn = document.getElementById('otOptionExtendBtn');
+    if (extended) {
+        extendBtn.disabled = true;
+        extendBtn.innerHTML = '<i class="bi bi-calendar-check me-2"></i>이미 연장됨';
+    } else {
+        extendBtn.disabled = false;
+        extendBtn.innerHTML = '<i class="bi bi-calendar-plus me-2"></i>1주일 연기하기';
+    }
+
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('otOptionModal'));
+    modal.show();
+}
+
+function doSelectOtAssignment(element) {
     // Remove previous selection
     document.querySelectorAll('.ot-assignment-card').forEach(card => {
         card.classList.remove('selected', 'border-3');
@@ -942,6 +1027,54 @@ function selectOtAssignment(element) {
     }
 
     sessionStorage.setItem('selectedOtAssignmentId', selectedOtAssignment.assignmentId);
+}
+
+function otOptionSchedule() {
+    // Close modal
+    bootstrap.Modal.getInstance(document.getElementById('otOptionModal')).hide();
+
+    // Enter OT add mode and select the assignment
+    enterOtAddMode();
+    if (window.pendingOtElement) {
+        doSelectOtAssignment(window.pendingOtElement);
+        window.pendingOtElement = null;
+    }
+}
+
+function otOptionExtend() {
+    const element = window.pendingOtElement;
+    if (!element) return;
+
+    const assignmentId = element.dataset.assignmentId;
+    const btn = document.getElementById('otOptionExtendBtn');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>처리 중...';
+
+    fetch(`/ot-assignments/${assignmentId}/extend`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Close modal and reload
+            bootstrap.Modal.getInstance(document.getElementById('otOptionModal')).hide();
+            location.reload();
+        } else {
+            alert(data.error || '연장에 실패했습니다.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-calendar-plus me-2"></i>1주일 연기하기';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('연장 중 오류가 발생했습니다.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-calendar-plus me-2"></i>1주일 연기하기';
+    });
 }
 
 function addOtScheduleToSlot(element) {
@@ -1085,6 +1218,142 @@ function addScheduleToSlot(element) {
     });
 }
 
+// ===== Drag and Drop Schedule Movement (Edit Mode Only) =====
+let draggedSchedule = null;
+
+function initDragAndDrop() {
+    // Set up drop targets on all cells (always ready, but drag only works in edit mode)
+    document.querySelectorAll('.schedule-cell').forEach(cell => {
+        cell.addEventListener('dragover', handleDragOver);
+        cell.addEventListener('dragleave', handleDragLeave);
+        cell.addEventListener('drop', handleDrop);
+    });
+}
+
+function enableDragMode() {
+    // Enable dragging for planned schedule items
+    document.querySelectorAll('.schedule-item').forEach(item => {
+        const status = item.dataset.status;
+        if (status === '수업 계획') {
+            item.setAttribute('draggable', 'true');
+            item.classList.add('draggable');
+            item.addEventListener('dragstart', handleDragStart);
+            item.addEventListener('dragend', handleDragEnd);
+        }
+    });
+}
+
+function disableDragMode() {
+    // Disable dragging for all schedule items
+    document.querySelectorAll('.schedule-item').forEach(item => {
+        item.setAttribute('draggable', 'false');
+        item.classList.remove('draggable');
+        item.removeEventListener('dragstart', handleDragStart);
+        item.removeEventListener('dragend', handleDragEnd);
+    });
+}
+
+function handleDragStart(e) {
+    // Only allow drag in edit mode
+    if (!document.body.classList.contains('edit-mode')) {
+        e.preventDefault();
+        return;
+    }
+
+    draggedSchedule = this;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', this.dataset.scheduleId);
+
+    // Highlight valid drop targets (empty cells)
+    setTimeout(() => {
+        document.querySelectorAll('.schedule-cell:not(.has-schedule)').forEach(cell => {
+            cell.classList.add('drop-target');
+        });
+    }, 0);
+}
+
+function handleDragEnd(e) {
+    this.classList.remove('dragging');
+    draggedSchedule = null;
+
+    // Remove highlights
+    document.querySelectorAll('.schedule-cell').forEach(cell => {
+        cell.classList.remove('drop-target', 'drag-over');
+    });
+}
+
+function handleDragOver(e) {
+    e.preventDefault();
+
+    // Only allow drop on empty cells
+    if (!this.classList.contains('has-schedule')) {
+        e.dataTransfer.dropEffect = 'move';
+        this.classList.add('drag-over');
+    } else {
+        e.dataTransfer.dropEffect = 'none';
+    }
+}
+
+function handleDragLeave(e) {
+    this.classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+    e.preventDefault();
+    this.classList.remove('drag-over');
+
+    // Only allow drop on empty cells
+    if (this.classList.contains('has-schedule')) {
+        return;
+    }
+
+    if (!draggedSchedule) return;
+
+    const scheduleId = draggedSchedule.dataset.scheduleId;
+    const newDate = this.dataset.date;
+    const newTime = this.dataset.time;
+
+    // Show loading state
+    this.classList.add('loading');
+    draggedSchedule.closest('.schedule-cell').classList.add('loading');
+
+    fetch('{{ url_for("move_schedule") }}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            schedule_id: scheduleId,
+            new_date: newDate,
+            new_time: newTime
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '스케줄 이동에 실패했습니다.');
+            this.classList.remove('loading');
+            if (draggedSchedule) {
+                draggedSchedule.closest('.schedule-cell').classList.remove('loading');
+            }
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('스케줄 이동 중 오류가 발생했습니다.');
+        this.classList.remove('loading');
+        if (draggedSchedule) {
+            draggedSchedule.closest('.schedule-cell').classList.remove('loading');
+        }
+    });
+}
+
+// Initialize drag and drop when page loads
+document.addEventListener('DOMContentLoaded', initDragAndDrop);
+
 function deleteSchedule(scheduleId, scheduleDate) {
     if (!document.body.classList.contains('delete-mode')) return;
 
@@ -1143,13 +1412,12 @@ function deleteSchedule(scheduleId, scheduleDate) {
 
 // ===== Session Complete Modal Functions =====
 let currentScheduleId = null;
-let modalSignatureCanvas = null;
-let modalSignatureCtx = null;
-let isModalDrawing = false;
-let modalLastX = 0;
-let modalLastY = 0;
 
 function isWeekday(dateStr) {
+    // Check if it's a holiday first (holidays are treated like weekends)
+    if (weekHolidays.includes(dateStr)) {
+        return false;
+    }
     const date = new Date(dateStr);
     const day = date.getDay(); // 0=Sunday, 1=Monday, ..., 6=Saturday
     return day >= 1 && day <= 5; // Monday to Friday
@@ -1183,7 +1451,7 @@ function openCompleteModal(scheduleId, memberName, scheduleDate, startTime, endT
 
     // Reset form
     document.querySelectorAll('input[name="modal_work_type"]').forEach(r => r.checked = false);
-    clearModalSignature();
+    document.getElementById('modal_session_notes').value = '';
 
     // Check if weekday for auto work type classification
     const workTypeSection = document.getElementById('workTypeSelection');
@@ -1221,102 +1489,6 @@ function openCompleteModal(scheduleId, memberName, scheduleDate, startTime, endT
     // Show modal
     const modal = new bootstrap.Modal(document.getElementById('completeSessionModal'));
     modal.show();
-
-    // Initialize signature canvas after modal is shown
-    document.getElementById('completeSessionModal').addEventListener('shown.bs.modal', initModalSignature, { once: true });
-}
-
-function initModalSignature() {
-    modalSignatureCanvas = document.getElementById('modalSignatureCanvas');
-    modalSignatureCtx = modalSignatureCanvas.getContext('2d');
-
-    // Set up canvas
-    modalSignatureCtx.strokeStyle = '#000';
-    modalSignatureCtx.lineWidth = 2;
-    modalSignatureCtx.lineCap = 'round';
-    modalSignatureCtx.lineJoin = 'round';
-
-    // Fill with white background
-    modalSignatureCtx.fillStyle = '#fff';
-    modalSignatureCtx.fillRect(0, 0, modalSignatureCanvas.width, modalSignatureCanvas.height);
-
-    // Remove existing listeners to avoid duplicates
-    modalSignatureCanvas.removeEventListener('mousedown', startModalDrawing);
-    modalSignatureCanvas.removeEventListener('mousemove', modalDraw);
-    modalSignatureCanvas.removeEventListener('mouseup', stopModalDrawing);
-    modalSignatureCanvas.removeEventListener('mouseout', stopModalDrawing);
-    modalSignatureCanvas.removeEventListener('touchstart', startModalDrawing);
-    modalSignatureCanvas.removeEventListener('touchmove', modalDraw);
-    modalSignatureCanvas.removeEventListener('touchend', stopModalDrawing);
-
-    // Mouse events
-    modalSignatureCanvas.addEventListener('mousedown', startModalDrawing);
-    modalSignatureCanvas.addEventListener('mousemove', modalDraw);
-    modalSignatureCanvas.addEventListener('mouseup', stopModalDrawing);
-    modalSignatureCanvas.addEventListener('mouseout', stopModalDrawing);
-
-    // Touch events
-    modalSignatureCanvas.addEventListener('touchstart', startModalDrawing);
-    modalSignatureCanvas.addEventListener('touchmove', modalDraw);
-    modalSignatureCanvas.addEventListener('touchend', stopModalDrawing);
-}
-
-function getModalPosition(e) {
-    const rect = modalSignatureCanvas.getBoundingClientRect();
-    const scaleX = modalSignatureCanvas.width / rect.width;
-    const scaleY = modalSignatureCanvas.height / rect.height;
-
-    if (e.touches) {
-        return {
-            x: (e.touches[0].clientX - rect.left) * scaleX,
-            y: (e.touches[0].clientY - rect.top) * scaleY
-        };
-    }
-    return {
-        x: (e.clientX - rect.left) * scaleX,
-        y: (e.clientY - rect.top) * scaleY
-    };
-}
-
-function startModalDrawing(e) {
-    isModalDrawing = true;
-    const pos = getModalPosition(e);
-    modalLastX = pos.x;
-    modalLastY = pos.y;
-}
-
-function modalDraw(e) {
-    if (!isModalDrawing) return;
-    e.preventDefault();
-
-    const pos = getModalPosition(e);
-
-    modalSignatureCtx.beginPath();
-    modalSignatureCtx.moveTo(modalLastX, modalLastY);
-    modalSignatureCtx.lineTo(pos.x, pos.y);
-    modalSignatureCtx.stroke();
-
-    modalLastX = pos.x;
-    modalLastY = pos.y;
-
-    updateModalSignatureData();
-}
-
-function stopModalDrawing() {
-    isModalDrawing = false;
-}
-
-function updateModalSignatureData() {
-    const signatureData = modalSignatureCanvas.toDataURL('image/png');
-    document.getElementById('modal_signature').value = signatureData;
-}
-
-function clearModalSignature() {
-    if (modalSignatureCtx) {
-        modalSignatureCtx.fillStyle = '#fff';
-        modalSignatureCtx.fillRect(0, 0, modalSignatureCanvas.width, modalSignatureCanvas.height);
-    }
-    document.getElementById('modal_signature').value = '';
 }
 
 function submitCompleteSession() {
@@ -1333,16 +1505,10 @@ function submitCompleteSession() {
         workTypeValue = manualWorkType.value;
     }
 
-    const signature = document.getElementById('modal_signature').value;
     const sessionNotes = document.getElementById('modal_session_notes').value;
 
     if (!workTypeValue) {
         alert('근무 유형을 선택해주세요.');
-        return;
-    }
-
-    if (!signature) {
-        alert('회원 서명을 받아주세요.');
         return;
     }
 
@@ -1358,7 +1524,6 @@ function submitCompleteSession() {
         body: JSON.stringify({
             schedule_id: currentScheduleId,
             work_type: workTypeValue,
-            session_signature: signature,
             session_notes: sessionNotes
         })
     })
@@ -1498,7 +1663,7 @@ function submitEditSchedule() {
     <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="completeSessionModalLabel">수업 완료 처리</h5>
+                <h5 class="modal-title" id="completeSessionModalLabel">수업 확인</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body">
@@ -1545,30 +1710,22 @@ function submitEditSchedule() {
                     <label class="form-label"><strong>근무 유형</strong></label>
                     <div class="alert alert-secondary py-2 mb-1">
                         <span id="autoWorkTypeValue" class="fw-bold"></span>
-                        <small class="text-muted ms-2">(현재 시간 기준 자동 분류)</small>
+                        <small class="text-muted ms-2">(수업 시간 기준 자동 분류)</small>
                     </div>
                     <input type="hidden" id="autoWorkTypeHidden" value="">
                     <small class="text-muted">평일은 근무시간에 따라 자동 분류됩니다.</small>
-                </div>
-
-                <!-- Signature Pad -->
-                <div class="mb-3">
-                    <label class="form-label"><strong>회원 서명 *</strong></label>
-                    <p class="text-muted small mb-2">회원에게 아래에 서명을 받아주세요.</p>
-                    <div class="signature-container border rounded p-2 bg-white">
-                        <canvas id="modalSignatureCanvas" width="380" height="130"
-                                style="width: 100%; border: 1px solid #ccc; border-radius: 4px; touch-action: none;"></canvas>
-                    </div>
-                    <input type="hidden" id="modal_signature">
-                    <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearModalSignature()">
-                        서명 지우기
-                    </button>
                 </div>
 
                 <!-- Session Notes -->
                 <div class="mb-3">
                     <label class="form-label"><strong>수업 일지</strong> <small class="text-muted">(선택사항)</small></label>
                     <textarea class="form-control" id="modal_session_notes" rows="3" placeholder="수업 내용, 회원 상태, 특이사항 등을 기록하세요..."></textarea>
+                </div>
+
+                <!-- Info about member signature -->
+                <div class="alert alert-warning mb-0">
+                    <i class="bi bi-info-circle me-1"></i>
+                    <small>수업 확인 후 회원이 본인 계정에서 서명을 완료하면 수업이 최종 완료됩니다.</small>
                 </div>
             </div>
             <div class="modal-footer d-flex justify-content-between">
@@ -1578,7 +1735,7 @@ function submitEditSchedule() {
                 <div>
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">닫기</button>
                     <button type="button" class="btn btn-success" id="modalCompleteBtn" onclick="submitCompleteSession()">
-                        <i class="bi bi-check-circle"></i> 수업 완료
+                        <i class="bi bi-check-circle"></i> 수업 확인
                     </button>
                 </div>
             </div>
@@ -1784,5 +1941,46 @@ function checkAllDecided() {
 #completeSessionModal .signature-container {
     background-color: #f8f9fa;
 }
+.schedule-status.status-confirmed {
+    background-color: #0d6efd;
+    color: #fff;
+}
 </style>
+
+<!-- OT Option Modal (when clicking OT assignment) -->
+{% if user.role == 'trainer' %}
+<div class="modal fade" id="otOptionModal" tabindex="-1">
+    <div class="modal-dialog modal-sm modal-dialog-centered">
+        <div class="modal-content border-0 shadow">
+            <div class="modal-header border-0 pb-0" style="background-color: #475569;">
+                <h6 class="modal-title text-white">
+                    <i class="bi bi-person-badge me-2"></i>OT 회원 관리
+                </h6>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body pt-3">
+                <div class="text-center mb-4">
+                    <div class="bg-light rounded-3 p-3">
+                        <h5 class="mb-1 text-dark" id="otOptionMemberName">회원명</h5>
+                        <span class="badge bg-primary" id="otOptionSessionNumber">1차</span>
+                    </div>
+                </div>
+
+                <div class="d-grid gap-2">
+                    <button type="button" class="btn btn-lg btn-primary" id="otOptionScheduleBtn" onclick="otOptionSchedule()">
+                        <i class="bi bi-calendar-event me-2"></i>스케줄 등록하기
+                    </button>
+                    <button type="button" class="btn btn-lg btn-outline-secondary" id="otOptionExtendBtn" onclick="otOptionExtend()">
+                        <i class="bi bi-calendar-plus me-2"></i>1주일 연기하기
+                    </button>
+                </div>
+
+                <p class="text-muted small text-center mt-3 mb-0">
+                    <i class="bi bi-info-circle me-1"></i>연기는 1회만 가능합니다
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 {% endblock %}

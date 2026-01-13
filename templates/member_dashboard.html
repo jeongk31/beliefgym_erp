@@ -1,0 +1,453 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="mb-4">
+    <h2>안녕하세요, {{ user.name }}님</h2>
+    <p class="text-muted">회원 대시보드</p>
+</div>
+
+<!-- Summary Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <h3 class="text-primary mb-1">{{ total_sessions }}</h3>
+                <small class="text-muted">총 등록 횟수</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <h3 class="text-success mb-1">{{ completed_sessions }}</h3>
+                <small class="text-muted">완료된 수업</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <h3 class="text-warning mb-1">{{ remaining_sessions }}</h3>
+                <small class="text-muted">남은 횟수</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card text-center h-100">
+            <div class="card-body">
+                <h3 class="text-info mb-1">{{ upcoming_count }}</h3>
+                <small class="text-muted">예정된 수업</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Current Trainer Info -->
+{% if current_trainer %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0"><i class="bi bi-person-badge me-2"></i>담당 트레이너</h5>
+    </div>
+    <div class="card-body">
+        <div class="d-flex align-items-center">
+            <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3" style="width: 50px; height: 50px; font-size: 1.5rem;">
+                {{ current_trainer.name[0] }}
+            </div>
+            <div>
+                <h5 class="mb-0">{{ current_trainer.name }}</h5>
+                <small class="text-muted">담당 트레이너</small>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Pending Signatures -->
+{% if pending_signatures %}
+<div class="card mb-4 border-primary">
+    <div class="card-header bg-primary text-white">
+        <h5 class="mb-0"><i class="bi bi-pen me-2"></i>서명 대기 중인 수업</h5>
+    </div>
+    <div class="card-body">
+        <p class="text-muted small mb-3">트레이너가 확인한 수업입니다. 서명을 완료해주세요.</p>
+        {% for schedule in pending_signatures %}
+        <div class="card mb-2">
+            <div class="card-body py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>{{ schedule.schedule_date }}</strong>
+                        <span class="text-muted">{{ schedule.start_time[:5] }} - {{ schedule.end_time[:5] }}</span>
+                        <br>
+                        <small class="text-muted">트레이너: {{ schedule.trainer.name }}</small>
+                    </div>
+                    <button class="btn btn-warning btn-sm" onclick="openSignatureModal('{{ schedule.id }}', '{{ schedule.schedule_date }}', '{{ schedule.start_time[:5] }}')">
+                        <i class="bi bi-pen"></i> 서명하기
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Upcoming Classes -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-calendar-event me-2"></i>예정된 수업</h5>
+        {% if upcoming_classes|length > 5 %}
+        <button class="btn btn-sm btn-outline-primary" onclick="toggleViewAll('upcoming')">
+            <span id="upcomingToggleText">전체보기</span>
+        </button>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if upcoming_classes %}
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead class="table-light">
+                    <tr>
+                        <th>날짜</th>
+                        <th>시간</th>
+                        <th>트레이너</th>
+                    </tr>
+                </thead>
+                <tbody id="upcomingTableBody">
+                    {% for schedule in upcoming_classes %}
+                    <tr class="upcoming-row" {% if loop.index > 5 %}style="display: none;"{% endif %}>
+                        <td>{{ schedule.schedule_date }}</td>
+                        <td>{{ schedule.start_time[:5] }} - {{ schedule.end_time[:5] }}</td>
+                        <td>{{ schedule.trainer.name if schedule.trainer else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">예정된 수업이 없습니다.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Completed Classes History -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-check-circle me-2"></i>완료된 수업 내역</h5>
+        {% if completed_classes|length > 10 %}
+        <button class="btn btn-sm btn-outline-primary" onclick="toggleViewAll('completed')">
+            <span id="completedToggleText">전체보기</span>
+        </button>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if completed_classes %}
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead class="table-light">
+                    <tr>
+                        <th>날짜</th>
+                        <th>시간</th>
+                        <th>트레이너</th>
+                    </tr>
+                </thead>
+                <tbody id="completedTableBody">
+                    {% for schedule in completed_classes %}
+                    <tr class="completed-row" {% if loop.index > 10 %}style="display: none;"{% endif %}>
+                        <td>{{ schedule.schedule_date }}</td>
+                        <td>{{ schedule.start_time[:5] }} - {{ schedule.end_time[:5] }}</td>
+                        <td>{{ schedule.trainer.name if schedule.trainer else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">완료된 수업이 없습니다.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Course Registration Info -->
+<div class="card">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h5 class="mb-0"><i class="bi bi-file-text me-2"></i>수업 등록 정보</h5>
+        {% if member_entries|length > 5 %}
+        <button class="btn btn-sm btn-outline-primary" onclick="toggleViewAll('entries')">
+            <span id="entriesToggleText">전체보기</span>
+        </button>
+        {% endif %}
+    </div>
+    <div class="card-body">
+        {% if member_entries %}
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead class="table-light">
+                    <tr>
+                        <th>등록일</th>
+                        <th>등록 횟수</th>
+                        <th>사용</th>
+                        <th>남은 횟수</th>
+                    </tr>
+                </thead>
+                <tbody id="entriesTableBody">
+                    {% for entry in member_entries %}
+                    <tr class="entries-row" {% if loop.index > 5 %}style="display: none;"{% endif %}>
+                        <td>{{ entry.created_at[:10] }}</td>
+                        <td>{{ entry.sessions }}회</td>
+                        <td>{{ entry.used_sessions }}회</td>
+                        <td><strong class="text-success">{{ entry.remaining }}회</strong></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted text-center py-3 mb-0">등록 정보가 없습니다.</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Signature Modal -->
+<div class="modal fade" id="signatureModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">수업 완료 서명</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info mb-3">
+                    <strong>날짜:</strong> <span id="signModalDate"></span><br>
+                    <strong>시간:</strong> <span id="signModalTime"></span>
+                </div>
+                <input type="hidden" id="signScheduleId">
+
+                <div class="mb-3">
+                    <label class="form-label"><strong>서명</strong></label>
+                    <p class="text-muted small mb-2">아래에 서명해주세요.</p>
+                    <div class="signature-container border rounded p-2 bg-white">
+                        <canvas id="signatureCanvas" width="380" height="130"
+                                style="width: 100%; border: 1px solid #ccc; border-radius: 4px; touch-action: none;"></canvas>
+                    </div>
+                    <input type="hidden" id="signatureData">
+                    <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="clearSignature()">
+                        서명 지우기
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-success" id="submitSignBtn" onclick="submitSignature()">
+                    <i class="bi bi-check-circle"></i> 서명 완료
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let signatureCanvas = null;
+let signatureCtx = null;
+let isDrawing = false;
+let lastX = 0;
+let lastY = 0;
+let signatureModal = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    signatureModal = new bootstrap.Modal(document.getElementById('signatureModal'));
+    initSignatureCanvas();
+});
+
+function initSignatureCanvas() {
+    signatureCanvas = document.getElementById('signatureCanvas');
+    if (!signatureCanvas) return;
+
+    signatureCtx = signatureCanvas.getContext('2d');
+    signatureCtx.strokeStyle = '#000';
+    signatureCtx.lineWidth = 2;
+    signatureCtx.lineCap = 'round';
+    signatureCtx.lineJoin = 'round';
+    signatureCtx.fillStyle = '#fff';
+    signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+
+    // Mouse events
+    signatureCanvas.addEventListener('mousedown', startDrawing);
+    signatureCanvas.addEventListener('mousemove', draw);
+    signatureCanvas.addEventListener('mouseup', stopDrawing);
+    signatureCanvas.addEventListener('mouseout', stopDrawing);
+
+    // Touch events
+    signatureCanvas.addEventListener('touchstart', startDrawing);
+    signatureCanvas.addEventListener('touchmove', draw);
+    signatureCanvas.addEventListener('touchend', stopDrawing);
+}
+
+function getPosition(e) {
+    const rect = signatureCanvas.getBoundingClientRect();
+    const scaleX = signatureCanvas.width / rect.width;
+    const scaleY = signatureCanvas.height / rect.height;
+
+    if (e.touches) {
+        return {
+            x: (e.touches[0].clientX - rect.left) * scaleX,
+            y: (e.touches[0].clientY - rect.top) * scaleY
+        };
+    }
+    return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+    };
+}
+
+function startDrawing(e) {
+    isDrawing = true;
+    const pos = getPosition(e);
+    lastX = pos.x;
+    lastY = pos.y;
+}
+
+function draw(e) {
+    if (!isDrawing) return;
+    e.preventDefault();
+
+    const pos = getPosition(e);
+    signatureCtx.beginPath();
+    signatureCtx.moveTo(lastX, lastY);
+    signatureCtx.lineTo(pos.x, pos.y);
+    signatureCtx.stroke();
+
+    lastX = pos.x;
+    lastY = pos.y;
+    updateSignatureData();
+}
+
+function stopDrawing() {
+    isDrawing = false;
+}
+
+function updateSignatureData() {
+    document.getElementById('signatureData').value = signatureCanvas.toDataURL('image/png');
+}
+
+function clearSignature() {
+    signatureCtx.fillStyle = '#fff';
+    signatureCtx.fillRect(0, 0, signatureCanvas.width, signatureCanvas.height);
+    document.getElementById('signatureData').value = '';
+}
+
+function openSignatureModal(scheduleId, date, time) {
+    document.getElementById('signScheduleId').value = scheduleId;
+    document.getElementById('signModalDate').textContent = date;
+    document.getElementById('signModalTime').textContent = time;
+    clearSignature();
+    signatureModal.show();
+}
+
+function submitSignature() {
+    const scheduleId = document.getElementById('signScheduleId').value;
+    const signature = document.getElementById('signatureData').value;
+    const btn = document.getElementById('submitSignBtn');
+
+    if (!signature) {
+        alert('서명을 해주세요.');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch('/member/sign-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            schedule_id: scheduleId,
+            signature: signature
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '서명 처리에 실패했습니다.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> 서명 완료';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('서명 처리 중 오류가 발생했습니다.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle"></i> 서명 완료';
+    });
+}
+
+// Toggle view all functionality for tables
+const viewStates = {
+    upcoming: false,
+    completed: false,
+    entries: false
+};
+
+function toggleViewAll(section) {
+    const isExpanded = viewStates[section];
+    viewStates[section] = !isExpanded;
+
+    const rows = document.querySelectorAll(`.${section}-row`);
+    const toggleText = document.getElementById(`${section}ToggleText`);
+
+    if (isExpanded) {
+        // Collapse: hide rows beyond the limit
+        const limit = section === 'completed' ? 10 : 5;
+        rows.forEach((row, index) => {
+            if (index >= limit) {
+                row.style.display = 'none';
+            }
+        });
+        toggleText.textContent = '전체보기';
+    } else {
+        // Expand: show all rows
+        rows.forEach(row => {
+            row.style.display = '';
+        });
+        toggleText.textContent = '접기';
+    }
+}
+</script>
+
+<style>
+.signature-container {
+    background-color: #f8f9fa;
+}
+
+/* Mobile-friendly improvements */
+@media (max-width: 768px) {
+    /* Larger touch targets for buttons */
+    .btn {
+        padding: 12px 20px;
+        font-size: 1rem;
+    }
+
+    /* Better card spacing on mobile */
+    .card {
+        margin-bottom: 1rem;
+    }
+
+    .card-body {
+        padding: 1rem;
+    }
+
+    /* Make headers more prominent on mobile */
+    .card-header h5 {
+        font-size: 1.1rem;
+    }
+
+    /* Better signature canvas size on mobile */
+    #signatureCanvas {
+        max-width: 100%;
+        height: auto;
+        min-height: 150px;
+    }
+}
+</style>
+{% endblock %}

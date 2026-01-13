@@ -35,7 +35,7 @@
                 <thead class="table-light">
                     <tr>
                         <th>이름</th>
-                        <th>이메일</th>
+                        <th>아이디</th>
                         <th>지점</th>
                         <th>근무시간</th>
                         <th>등록일</th>
@@ -52,7 +52,7 @@
                     {% for trainer in trainers %}
                     <tr class="{{ 'table-secondary' if trainer.status == '비활성화' else '' }}">
                         <td><strong>{{ trainer.name }}</strong></td>
-                        <td>{{ trainer.email }}</td>
+                        <td>{{ trainer.username }}</td>
                         <td>{{ trainer.branch.name if trainer.branch else '-' }}</td>
                         <td>
                             {% if trainer.working_hours_start and trainer.working_hours_end %}

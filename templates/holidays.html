@@ -1,0 +1,163 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>공휴일 관리</h2>
+    <button type="button" class="btn btn-primary" onclick="openAddModal()">
+        + 공휴일 추가
+    </button>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover">
+                <thead class="table-light">
+                    <tr>
+                        <th>날짜</th>
+                        <th>공휴일명</th>
+                        <th>관리</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for holiday in holidays %}
+                    <tr>
+                        <td>{{ holiday.date }}</td>
+                        <td><strong>{{ holiday.name }}</strong></td>
+                        <td>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-secondary"
+                                        onclick="openEditModal('{{ holiday.id }}', '{{ holiday.date }}', '{{ holiday.name }}')">
+                                    수정
+                                </button>
+                                <button type="button" class="btn btn-outline-danger"
+                                        onclick="deleteHoliday('{{ holiday.id }}', '{{ holiday.name }}')">
+                                    삭제
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="3" class="text-center text-muted py-4">등록된 공휴일이 없습니다.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Add/Edit Holiday Modal -->
+<div class="modal fade" id="holidayModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="holidayModalTitle">공휴일 추가</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="holidayId">
+                <div class="mb-3">
+                    <label class="form-label">날짜</label>
+                    <input type="date" class="form-control" id="holidayDate" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">공휴일명</label>
+                    <input type="text" class="form-control" id="holidayName" placeholder="예: 설날" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary btn-sm" id="saveHolidayBtn" onclick="saveHoliday()">
+                    저장
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let holidayModal = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    holidayModal = new bootstrap.Modal(document.getElementById('holidayModal'));
+});
+
+function openAddModal() {
+    document.getElementById('holidayModalTitle').textContent = '공휴일 추가';
+    document.getElementById('holidayId').value = '';
+    document.getElementById('holidayDate').value = '';
+    document.getElementById('holidayName').value = '';
+    holidayModal.show();
+}
+
+function openEditModal(id, date, name) {
+    document.getElementById('holidayModalTitle').textContent = '공휴일 수정';
+    document.getElementById('holidayId').value = id;
+    document.getElementById('holidayDate').value = date;
+    document.getElementById('holidayName').value = name;
+    holidayModal.show();
+}
+
+function saveHoliday() {
+    const id = document.getElementById('holidayId').value;
+    const date = document.getElementById('holidayDate').value;
+    const name = document.getElementById('holidayName').value;
+    const btn = document.getElementById('saveHolidayBtn');
+
+    if (!date || !name) {
+        alert('날짜와 공휴일명을 입력해주세요.');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    const url = id ? `/holidays/${id}` : '/holidays/add';
+
+    fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date, name })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '저장에 실패했습니다.');
+            btn.disabled = false;
+            btn.innerHTML = '저장';
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('저장 중 오류가 발생했습니다.');
+        btn.disabled = false;
+        btn.innerHTML = '저장';
+    });
+}
+
+function deleteHoliday(id, name) {
+    if (!confirm(`"${name}" 공휴일을 삭제하시겠습니까?`)) return;
+
+    fetch(`/holidays/${id}/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert(data.error || '삭제에 실패했습니다.');
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alert('삭제 중 오류가 발생했습니다.');
+    });
+}
+</script>
+{% endblock %}

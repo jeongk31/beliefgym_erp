@@ -246,11 +246,11 @@ def index():
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
-        email = request.form.get('email')
+        username = request.form.get('username')
         password = request.form.get('password')
 
-        # Query user from database
-        response = supabase.table('users').select('*').eq('email', email).execute()
+        # Query user from database by username
+        response = supabase.table('users').select('*').eq('username', username).execute()
 
         if response.data and len(response.data) > 0:
             user = response.data[0]
@@ -264,13 +264,16 @@ def login():
                 session['user'] = {
                     'id': user['id'],
                     'name': user['name'],
-                    'email': user['email'],
+                    'username': user.get('username'),
                     'role': user['role'],
-                    'branch_id': user['branch_id']
+                    'branch_id': user.get('branch_id')
                 }
+                # Redirect members to member dashboard
+                if user['role'] == 'member':
+                    return redirect(url_for('member_dashboard'))
                 return redirect(url_for('dashboard'))
 
-        flash('이메일 또는 비밀번호가 올바르지 않습니다.', 'error')
+        flash('아이디 또는 비밀번호가 올바르지 않습니다.', 'error')
 
     return render_template('login.html')
 
@@ -285,6 +288,11 @@ def logout():
 @login_required
 def dashboard():
     user = session['user']
+
+    # Redirect members to their dashboard
+    if user['role'] == 'member':
+        return redirect(url_for('member_dashboard'))
+
     today = datetime.now(KST).date()
 
     # Calculate month ranges
@@ -499,6 +507,261 @@ def dashboard():
                     dashboard_data['ot_returned'] += 1
 
     return render_template('dashboard.html', user=user, data=dashboard_data, today=today.isoformat(), current_month=month_start.strftime('%Y년 %m월'))
+
+
+# Member Dashboard (for logged-in members)
+@app.route('/member-dashboard')
+@login_required
+def member_dashboard():
+    user = session['user']
+
+    # Only members can access this
+    if user['role'] != 'member':
+        return redirect(url_for('dashboard'))
+
+    today = datetime.now(KST).date()
+
+    # Get all member entries linked to this user
+    member_entries_response = supabase.table('members').select('*').eq('user_id', user['id']).execute()
+    member_entries = member_entries_response.data if member_entries_response.data else []
+
+    # Get member IDs
+    member_ids = [m['id'] for m in member_entries]
+
+    # Calculate totals
+    total_sessions = sum(m.get('sessions', 0) for m in member_entries)
+
+    # Get all schedules for this member
+    completed_classes = []
+    upcoming_classes = []
+    pending_signatures = []
+    current_trainer = None
+
+    if member_ids:
+        # Get completed classes
+        completed_response = supabase.table('schedules').select(
+            '*, trainer:users!schedules_trainer_id_fkey(name)'
+        ).in_('member_id', member_ids).eq('status', '수업 완료').order('schedule_date', desc=True).limit(20).execute()
+        completed_classes = completed_response.data if completed_response.data else []
+
+        # Get upcoming classes (planned, future dates)
+        upcoming_response = supabase.table('schedules').select(
+            '*, trainer:users!schedules_trainer_id_fkey(name)'
+        ).in_('member_id', member_ids).eq('status', '수업 계획').gte('schedule_date', today.isoformat()).order('schedule_date').execute()
+        upcoming_classes = upcoming_response.data if upcoming_response.data else []
+
+        # Get pending signatures (trainer confirmed, awaiting member signature)
+        pending_response = supabase.table('schedules').select(
+            '*, trainer:users!schedules_trainer_id_fkey(name)'
+        ).in_('member_id', member_ids).eq('status', '트레이너 확인').order('schedule_date').execute()
+        pending_signatures = pending_response.data if pending_response.data else []
+
+        # Get current trainer (from most recent entry)
+        if member_entries:
+            latest_entry = sorted(member_entries, key=lambda x: x['created_at'], reverse=True)[0]
+            if latest_entry.get('trainer_id'):
+                trainer_response = supabase.table('users').select('name').eq('id', latest_entry['trainer_id']).execute()
+                if trainer_response.data:
+                    current_trainer = trainer_response.data[0]
+
+    completed_sessions = len(completed_classes)
+    remaining_sessions = total_sessions - completed_sessions
+
+    # Add remaining info to member entries
+    for entry in member_entries:
+        entry_completed = supabase.table('schedules').select('id', count='exact').eq('member_id', entry['id']).eq('status', '수업 완료').execute()
+        entry['used_sessions'] = entry_completed.count if entry_completed.count else 0
+        entry['remaining'] = entry['sessions'] - entry['used_sessions']
+
+    return render_template('member_dashboard.html',
+                         user=user,
+                         member_entries=member_entries,
+                         total_sessions=total_sessions,
+                         completed_sessions=completed_sessions,
+                         remaining_sessions=remaining_sessions,
+                         upcoming_count=len(upcoming_classes),
+                         current_trainer=current_trainer,
+                         pending_signatures=pending_signatures,
+                         upcoming_classes=upcoming_classes,
+                         completed_classes=completed_classes)
+
+
+@app.route('/member/sign-session', methods=['POST'])
+@login_required
+def member_sign_session():
+    """Member signs a session that trainer has confirmed"""
+    user = session['user']
+
+    if user['role'] != 'member':
+        return jsonify({'success': False, 'error': '권한이 없습니다.'}), 403
+
+    data = request.get_json()
+    schedule_id = data.get('schedule_id')
+    signature = data.get('signature')
+
+    if not schedule_id or not signature:
+        return jsonify({'success': False, 'error': '필수 정보가 누락되었습니다.'}), 400
+
+    # Get schedule and verify it's for this member
+    schedule_response = supabase.table('schedules').select('*, member:members!schedules_member_id_fkey(user_id)').eq('id', schedule_id).execute()
+    if not schedule_response.data:
+        return jsonify({'success': False, 'error': '스케줄을 찾을 수 없습니다.'}), 404
+
+    schedule_item = schedule_response.data[0]
+
+    # Verify this schedule belongs to the member
+    if schedule_item.get('member', {}).get('user_id') != user['id']:
+        return jsonify({'success': False, 'error': '권한이 없습니다.'}), 403
+
+    # Verify status is pending signature
+    if schedule_item.get('status') != '트레이너 확인':
+        return jsonify({'success': False, 'error': '서명 대기 상태가 아닙니다.'}), 400
+
+    try:
+        # Update schedule with signature and complete
+        supabase.table('schedules').update({
+            'status': '수업 완료',
+            'session_signature': signature,
+            'completed_at': datetime.now().isoformat()
+        }).eq('id', schedule_id).execute()
+
+        # If this is an OT schedule, update the assignment status to 'completed'
+        ot_assignment_id = schedule_item.get('ot_assignment_id')
+        if ot_assignment_id:
+            try:
+                supabase.table('ot_assignments').update({
+                    'status': 'completed',
+                    'completed_at': datetime.now().isoformat()
+                }).eq('id', ot_assignment_id).execute()
+
+                # Log the completion
+                supabase.table('ot_assignment_history').insert({
+                    'member_id': schedule_item.get('member_id'),
+                    'trainer_id': schedule_item.get('trainer_id'),
+                    'action': 'completed',
+                    'action_by': user['id'],
+                    'notes': f'회원 서명으로 수업 완료: {schedule_item.get("schedule_date")}'
+                }).execute()
+            except Exception as e:
+                print(f"Error updating OT assignment to completed: {e}")
+
+        # Check if OT member has completed all sessions
+        member_id = schedule_item.get('member_id')
+        if member_id:
+            check_ot_session_completion(member_id)
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'오류: {str(e)}'}), 500
+
+
+# Registered Members Management (for all staff)
+@app.route('/registered-members')
+@role_required('main_admin', 'branch_admin', 'trainer')
+def registered_members():
+    user = session['user']
+    selected_branch_id = request.args.get('branch_id')
+
+    # Get branches for filter (main_admin only)
+    branches = []
+    if user['role'] == 'main_admin':
+        branches_response = supabase.table('branches').select('*').order('name').execute()
+        branches = branches_response.data if branches_response.data else []
+
+    # Get all member users (role = 'member')
+    if user['role'] == 'main_admin':
+        query = supabase.table('users').select('*').eq('role', 'member')
+        if selected_branch_id:
+            query = query.eq('branch_id', selected_branch_id)
+        users_response = query.order('created_at', desc=True).execute()
+    else:
+        # branch_admin and trainer see only their branch members
+        users_response = supabase.table('users').select('*').eq('role', 'member').eq('branch_id', user['branch_id']).order('created_at', desc=True).execute()
+
+    member_users = users_response.data if users_response.data else []
+
+    # Get member entries for each user to count courses
+    for member_user in member_users:
+        entries_response = supabase.table('members').select('id, trainer_id').eq('user_id', member_user['id']).execute()
+        entries = entries_response.data if entries_response.data else []
+        member_user['course_count'] = len(entries)
+
+        # Get trainer name from first entry
+        if entries and entries[0].get('trainer_id'):
+            trainer_response = supabase.table('users').select('name').eq('id', entries[0]['trainer_id']).execute()
+            if trainer_response.data:
+                member_user['trainer_name'] = trainer_response.data[0]['name']
+            else:
+                member_user['trainer_name'] = None
+        else:
+            member_user['trainer_name'] = None
+
+    return render_template('registered_members.html',
+                         user=user,
+                         registered_members=member_users,
+                         branches=branches,
+                         selected_branch_id=selected_branch_id)
+
+
+@app.route('/registered-members/add', methods=['POST'])
+@role_required('main_admin', 'branch_admin', 'trainer')
+def add_registered_member():
+    user = session['user']
+    data = request.get_json()
+
+    name = data.get('name')
+    username = data.get('username')
+    password = data.get('password')
+    phone = data.get('phone', '')
+    age = data.get('age')
+    gender = data.get('gender')
+    occupation = data.get('occupation')
+    special_notes = data.get('special_notes')
+    inbody_photos = data.get('inbody_photos')  # List of base64 images
+    signature = data.get('signature')  # Base64 signature image
+    branch_id = data.get('branch_id')
+
+    if not all([name, username, password, phone]):
+        return jsonify({'success': False, 'error': '이름, 아이디, 비밀번호, 전화번호를 입력해주세요.'}), 400
+
+    # Check if username already exists
+    existing = supabase.table('users').select('id').eq('username', username).execute()
+    if existing.data:
+        return jsonify({'success': False, 'error': '이미 사용 중인 아이디입니다.'}), 400
+
+    # Use user's branch if branch_admin or trainer
+    if user['role'] in ['branch_admin', 'trainer']:
+        branch_id = user['branch_id']
+
+    try:
+        # Create member user account
+        member_data = {
+            'name': name,
+            'username': username,
+            'password_hash': password,  # In production, hash this!
+            'role': 'member',
+            'phone': phone,
+            'branch_id': branch_id
+        }
+        # Add optional fields if provided
+        if age:
+            member_data['age'] = int(age)
+        if gender:
+            member_data['gender'] = gender
+        if occupation:
+            member_data['occupation'] = occupation
+        if special_notes:
+            member_data['special_notes'] = special_notes
+        if inbody_photos:
+            member_data['inbody_photos'] = inbody_photos
+        if signature:
+            member_data['signature'] = signature
+
+        supabase.table('users').insert(member_data).execute()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'등록 중 오류가 발생했습니다: {str(e)}'}), 500
 
 
 @app.route('/members')
@@ -759,6 +1022,13 @@ def members():
     # Add display_name for duplicate name detection
     add_display_names_to_members(members_list)
 
+    # Get registered members for the add course dropdown
+    if user['role'] == 'main_admin':
+        registered_members_response = supabase.table('users').select('id, name, username, phone').eq('role', 'member').order('name').execute()
+    else:
+        registered_members_response = supabase.table('users').select('id, name, username, phone').eq('role', 'member').eq('branch_id', user['branch_id']).order('name').execute()
+    registered_members_list = registered_members_response.data if registered_members_response.data else []
+
     return render_template('members.html',
                          user=user,
                          members=members_list,
@@ -770,7 +1040,8 @@ def members():
                          trainers=trainers_list,
                          filter_branch_id=filter_branch_id,
                          filter_trainer_id=filter_trainer_id,
-                         filter_trainer_name=filter_trainer_name)
+                         filter_trainer_name=filter_trainer_name,
+                         registered_members=registered_members_list)
 
 
 @app.route('/members/add', methods=['GET', 'POST'])
@@ -779,6 +1050,7 @@ def members():
 def add_member():
     user = session['user']
     trainers = []
+    registered_members = []
 
     # Only admins can select trainer
     if user['role'] in ['main_admin', 'branch_admin']:
@@ -787,6 +1059,15 @@ def add_member():
         else:
             response = supabase.table('users').select('id, name').eq('role', 'trainer').eq('branch_id', user['branch_id']).execute()
         trainers = response.data if response.data else []
+
+    # Get registered members (users with role='member')
+    if user['role'] == 'main_admin':
+        rm_response = supabase.table('users').select('id, name, username, phone').eq('role', 'member').order('name').execute()
+    elif user['role'] == 'branch_admin':
+        rm_response = supabase.table('users').select('id, name, username, phone').eq('role', 'member').eq('branch_id', user['branch_id']).order('name').execute()
+    else:
+        rm_response = supabase.table('users').select('id, name, username, phone').eq('role', 'member').order('name').execute()
+    registered_members = rm_response.data if rm_response.data else []
 
     if request.method == 'POST':
         # Get form data
@@ -798,6 +1079,8 @@ def add_member():
         channel = request.form.get('channel')
         signature = request.form.get('signature')
         member_type = request.form.get('member_type', '일반회원')
+        # User ID of registered member (can come from either field)
+        registered_member_id = request.form.get('registered_member_id') or request.form.get('user_id')
 
         # Optional fields
         age = request.form.get('age')
@@ -816,7 +1099,7 @@ def add_member():
             # OT members: only need basic info (no trainer required - goes to pool)
             if not all([member_name, phone, channel]):
                 flash('모든 필수 항목을 입력해주세요.', 'error')
-                return render_template('add_member.html', user=user, trainers=trainers)
+                return render_template('add_member.html', user=user, trainers=trainers, registered_members=registered_members)
             # OT members need 횟수 (sessions)
             sessions = sessions or '1'
             unit_price = '0'
@@ -825,7 +1108,7 @@ def add_member():
             # Regular members: all payment fields required
             if not all([member_name, phone, payment_method, sessions, unit_price, channel, trainer_id]):
                 flash('모든 필수 항목을 입력해주세요.', 'error')
-                return render_template('add_member.html', user=user, trainers=trainers)
+                return render_template('add_member.html', user=user, trainers=trainers, registered_members=registered_members)
 
         # Insert member into database
         try:
@@ -840,6 +1123,10 @@ def add_member():
                 'created_by': user['id'],
                 'member_type': member_type
             }
+
+            # Link to registered member user account if selected
+            if registered_member_id:
+                member_data['user_id'] = registered_member_id
 
             # For OT members: no trainer assignment, goes to branch admin pool
             if member_type == 'OT회원':
@@ -877,18 +1164,18 @@ def add_member():
 
             supabase.table('members').insert(member_data).execute()
             if member_type == 'OT회원':
-                flash('OT 등록이 완료 되었습니다.', 'success')
+                flash('OT 수업이 등록되었습니다.', 'success')
                 # Trainers can't access ot_members page, redirect to members instead
                 if user['role'] == 'trainer':
                     return redirect(url_for('members'))
                 return redirect(url_for('ot_members'))
             else:
-                flash('회원이 성공적으로 등록되었습니다.', 'success')
+                flash('수업이 성공적으로 등록되었습니다.', 'success')
                 return redirect(url_for('members'))
         except Exception as e:
-            flash(f'회원 등록 중 오류가 발생했습니다: {str(e)}', 'error')
+            flash(f'수업 등록 중 오류가 발생했습니다: {str(e)}', 'error')
 
-    return render_template('add_member.html', user=user, trainers=trainers)
+    return render_template('add_member.html', user=user, trainers=trainers, registered_members=registered_members)
 
 
 @app.route('/members/<member_id>')
@@ -1138,27 +1425,41 @@ def add_trainer():
         branches = []
 
     if request.method == 'POST':
-        email = request.form.get('email')
+        username = request.form.get('username')
         password = request.form.get('password')
         name = request.form.get('name')
+        work_start_time = request.form.get('work_start_time')
+        work_end_time = request.form.get('work_end_time')
 
         if user['role'] == 'main_admin':
             branch_id = request.form.get('branch_id')
         else:
             branch_id = user['branch_id']
 
-        if not all([email, password, name, branch_id]):
+        if not all([username, password, name, branch_id]):
             flash('모든 필수 항목을 입력해주세요.', 'error')
+            return render_template('add_trainer.html', user=user, branches=branches)
+
+        # Check if username already exists
+        existing = supabase.table('users').select('id').eq('username', username).execute()
+        if existing.data:
+            flash('이미 사용 중인 아이디입니다.', 'error')
             return render_template('add_trainer.html', user=user, branches=branches)
 
         try:
             trainer_data = {
-                'email': email,
+                'username': username,
                 'password_hash': password,  # In production, hash this!
                 'name': name,
-                'role': 'trainer',  # Always trainer
+                'role': 'trainer',
                 'branch_id': branch_id
             }
+
+            # Add working hours if provided
+            if work_start_time:
+                trainer_data['work_start_time'] = work_start_time + ':00' if len(work_start_time) == 5 else work_start_time
+            if work_end_time:
+                trainer_data['work_end_time'] = work_end_time + ':00' if len(work_end_time) == 5 else work_end_time
 
             supabase.table('users').insert(trainer_data).execute()
             flash('트레이너가 성공적으로 등록되었습니다.', 'success')
@@ -1202,6 +1503,60 @@ def update_trainer_working_hours(trainer_id):
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': f'저장 중 오류가 발생했습니다: {str(e)}'}), 500
+
+
+# Holiday management routes (공휴일 관리) - Main Admin only
+@app.route('/holidays')
+@role_required('main_admin')
+def holidays():
+    user = session['user']
+    response = supabase.table('holidays').select('*').order('date').execute()
+    holidays_list = response.data if response.data else []
+    return render_template('holidays.html', user=user, holidays=holidays_list)
+
+
+@app.route('/holidays/add', methods=['POST'])
+@role_required('main_admin')
+def add_holiday():
+    data = request.get_json()
+    date = data.get('date')
+    name = data.get('name')
+
+    if not date or not name:
+        return jsonify({'success': False, 'error': '날짜와 공휴일명을 입력해주세요.'}), 400
+
+    try:
+        supabase.table('holidays').insert({'date': date, 'name': name}).execute()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'저장 중 오류가 발생했습니다: {str(e)}'}), 500
+
+
+@app.route('/holidays/<holiday_id>', methods=['POST'])
+@role_required('main_admin')
+def edit_holiday(holiday_id):
+    data = request.get_json()
+    date = data.get('date')
+    name = data.get('name')
+
+    if not date or not name:
+        return jsonify({'success': False, 'error': '날짜와 공휴일명을 입력해주세요.'}), 400
+
+    try:
+        supabase.table('holidays').update({'date': date, 'name': name}).eq('id', holiday_id).execute()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'수정 중 오류가 발생했습니다: {str(e)}'}), 500
+
+
+@app.route('/holidays/<holiday_id>/delete', methods=['POST'])
+@role_required('main_admin')
+def delete_holiday(holiday_id):
+    try:
+        supabase.table('holidays').delete().eq('id', holiday_id).execute()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'삭제 중 오류가 발생했습니다: {str(e)}'}), 500
 
 
 # Branch management routes (지점 관리) - Main Admin only
@@ -1319,18 +1674,24 @@ def add_branch_admin():
     branches = branches_response.data if branches_response.data else []
 
     if request.method == 'POST':
-        email = request.form.get('email')
+        username = request.form.get('username')
         password = request.form.get('password')
         name = request.form.get('name')
         branch_id = request.form.get('branch_id')
 
-        if not all([email, password, name, branch_id]):
+        if not all([username, password, name, branch_id]):
             flash('모든 필수 항목을 입력해주세요.', 'error')
+            return render_template('add_branch_admin.html', user=user, branches=branches)
+
+        # Check if username already exists
+        existing = supabase.table('users').select('id').eq('username', username).execute()
+        if existing.data:
+            flash('이미 사용 중인 아이디입니다.', 'error')
             return render_template('add_branch_admin.html', user=user, branches=branches)
 
         try:
             admin_data = {
-                'email': email,
+                'username': username,
                 'password_hash': password,  # In production, hash this!
                 'name': name,
                 'role': 'branch_admin',
@@ -1558,6 +1919,10 @@ def schedule():
                 'end': trainer_data.get('working_hours_end')
             }
 
+    # Get holidays for the current week (for work type auto classification)
+    holidays_response = supabase.table('holidays').select('date').gte('date', week_start.isoformat()).lte('date', week_end.isoformat()).execute()
+    week_holidays = [h['date'] for h in holidays_response.data] if holidays_response.data else []
+
     return render_template('schedule.html',
                          user=user,
                          schedule_grid=schedule_grid,
@@ -1572,7 +1937,8 @@ def schedule():
                          members=members_list,
                          ot_assignments=ot_assignments_list,
                          near_deadline_ots=near_deadline_ots,
-                         trainer_working_hours=trainer_working_hours)
+                         trainer_working_hours=trainer_working_hours,
+                         week_holidays=week_holidays)
 
 
 @app.route('/schedule/add', methods=['GET', 'POST'])
@@ -1845,13 +2211,12 @@ def cancel_session(schedule_id):
 @app.route('/schedule/complete-ajax', methods=['POST'])
 @login_required
 def complete_session_ajax():
-    """AJAX endpoint for completing a session from the popup modal"""
+    """AJAX endpoint for trainer to confirm a session (member will sign separately)"""
     user = session['user']
     data = request.get_json()
 
     schedule_id = data.get('schedule_id')
     work_type = data.get('work_type')
-    session_signature = data.get('session_signature')
     session_notes = data.get('session_notes', '')
 
     if not schedule_id:
@@ -1859,9 +2224,6 @@ def complete_session_ajax():
 
     if not work_type:
         return jsonify({'success': False, 'error': '근무 유형을 선택해주세요.'}), 400
-
-    if not session_signature:
-        return jsonify({'success': False, 'error': '회원 서명을 받아주세요.'}), 400
 
     # Get schedule details
     schedule_response = supabase.table('schedules').select('*').eq('id', schedule_id).execute()
@@ -1880,40 +2242,15 @@ def complete_session_ajax():
         return jsonify({'success': False, 'error': '이미 처리된 수업입니다.'}), 400
 
     try:
+        # Trainer confirms - set to '트레이너 확인' status, member will sign later
         supabase.table('schedules').update({
-            'status': '수업 완료',
+            'status': '트레이너 확인',
             'work_type': work_type,
-            'session_signature': session_signature,
-            'session_notes': session_notes,
-            'completed_at': datetime.now().isoformat()
+            'session_notes': session_notes
         }).eq('id', schedule_id).execute()
 
-        # If this is an OT schedule, update the assignment status to 'completed'
-        ot_assignment_id = schedule_item.get('ot_assignment_id')
-        if ot_assignment_id:
-            try:
-                supabase.table('ot_assignments').update({
-                    'status': 'completed',
-                    'completed_at': datetime.now().isoformat()
-                }).eq('id', ot_assignment_id).execute()
-
-                # Log the completion
-                supabase.table('ot_assignment_history').insert({
-                    'member_id': schedule_item.get('member_id'),
-                    'trainer_id': schedule_item.get('trainer_id'),
-                    'action': 'completed',
-                    'action_by': user['id'],
-                    'notes': f'수업 완료: {schedule_item.get("schedule_date")}'
-                }).execute()
-            except Exception as e:
-                print(f"Error updating OT assignment to completed: {e}")
-
-        # Check if OT member has completed all sessions
-        member_id = schedule_item.get('member_id')
-        if member_id:
-            check_ot_session_completion(member_id)
-
-        return jsonify({'success': True})
+        # Note: OT assignment completion will happen when member signs the session
+        return jsonify({'success': True, 'message': '수업이 확인되었습니다. 회원이 서명을 완료하면 수업이 완료됩니다.'})
     except Exception as e:
         return jsonify({'success': False, 'error': f'수업 완료 처리 중 오류가 발생했습니다: {str(e)}'}), 500
 
@@ -2305,6 +2642,55 @@ def quick_delete_schedule():
 
     try:
         supabase.table('schedules').delete().eq('id', schedule_id).execute()
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'오류: {str(e)}'}), 500
+
+
+@app.route('/schedule/move', methods=['POST'])
+@login_required
+def move_schedule():
+    """AJAX endpoint for moving schedules via drag-and-drop"""
+    user = session['user']
+
+    data = request.get_json()
+    schedule_id = data.get('schedule_id')
+    new_date = data.get('new_date')
+    new_time = data.get('new_time')
+
+    if not all([schedule_id, new_date, new_time]):
+        return jsonify({'success': False, 'error': '필수 정보가 누락되었습니다.'}), 400
+
+    # Get schedule to check permissions
+    schedule_response = supabase.table('schedules').select('*').eq('id', schedule_id).execute()
+    if not schedule_response.data:
+        return jsonify({'success': False, 'error': '스케줄을 찾을 수 없습니다.'}), 404
+
+    schedule_item = schedule_response.data[0]
+
+    # Only allow moving planned schedules (not completed or cancelled)
+    if schedule_item.get('status') != '수업 계획':
+        return jsonify({'success': False, 'error': '계획된 수업만 이동할 수 있습니다.'}), 403
+
+    # Check permission
+    if user['role'] == 'trainer' and schedule_item['trainer_id'] != user['id']:
+        return jsonify({'success': False, 'error': '이동 권한이 없습니다.'}), 403
+
+    # Check if target slot is already occupied
+    existing = supabase.table('schedules').select('id').eq('trainer_id', schedule_item['trainer_id']).eq('schedule_date', new_date).eq('start_time', new_time + ':00').neq('status', '수업 취소').execute()
+    if existing.data:
+        return jsonify({'success': False, 'error': '해당 시간에 이미 스케줄이 있습니다.'}), 400
+
+    # Calculate new end time (1 hour after start)
+    start_hour = int(new_time.split(':')[0])
+    new_end_time = f"{start_hour + 1:02d}:00:00"
+
+    try:
+        supabase.table('schedules').update({
+            'schedule_date': new_date,
+            'start_time': new_time + ':00',
+            'end_time': new_end_time
+        }).eq('id', schedule_id).execute()
         return jsonify({'success': True})
     except Exception as e:
         return jsonify({'success': False, 'error': f'오류: {str(e)}'}), 500

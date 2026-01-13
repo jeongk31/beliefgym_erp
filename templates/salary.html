@@ -39,6 +39,10 @@
     max-width: 400px;
     margin: 0 auto;
 }
+.table-dark.text-white th,
+.table-dark.text-white td {
+    color: #ffffff !important;
+}
 </style>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
@@ -357,9 +361,9 @@ function filterByBranch() {
 
 <!-- 매출 Display -->
 <div class="card mb-2 sales-display">
-    <div class="card-body py-2 d-flex justify-content-between align-items-center bg-primary bg-opacity-10">
-        <span class="fw-bold text-primary">{{ selected_month }} 이번 달 매출</span>
-        <span class="fw-bold text-primary fs-6">₩{{ "{:,}".format(trainer.sales) }}</span>
+    <div class="card-body py-2 d-flex justify-content-between align-items-center" style="background-color: #e7f3ff;">
+        <span class="fw-bold" style="color: #0d6efd;">{{ selected_month }} 이번 달 매출</span>
+        <span class="fw-bold fs-6" style="color: #0d6efd;">₩{{ "{:,}".format(trainer.sales) }}</span>
     </div>
 </div>
 
@@ -375,7 +379,7 @@ function filterByBranch() {
                     <td class="{% if trainer.incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.incentive) }}</td>
                 </tr>
                 <tr>
-                    <td class="bg-light fw-bold">수업당 인센</td>
+                    <td class="bg-light fw-bold">수업당 인센 <small class="text-muted">({{ trainer.class_count }}회)</small></td>
                     <td class="{% if trainer.class_incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(trainer.class_incentive) }}</td>
                 </tr>
                 <tr>
@@ -422,7 +426,7 @@ function filterByBranch() {
                     <td class="bg-light">세금 (3.3%)</td>
                     <td class="text-danger">-₩{{ "{:,}".format(tax) }}</td>
                 </tr>
-                <tr class="table-dark">
+                <tr class="table-dark text-white">
                     <th>최종 급여</th>
                     <th>₩{{ "{:,}".format(final_salary) }}</th>
                 </tr>
@@ -440,10 +444,10 @@ function filterByBranch() {
 
 <!-- 매출 Display -->
 <div class="card mb-2 sales-display">
-    <div class="card-body py-2 bg-primary bg-opacity-10">
+    <div class="card-body py-2" style="background-color: #e7f3ff;">
         <div class="d-flex justify-content-between align-items-center">
-            <span class="fw-bold text-primary">{{ selected_trainer.name }} - {{ selected_month }} 이번 달 매출</span>
-            <span class="fw-bold text-primary fs-6">₩{{ "{:,}".format(selected_trainer.sales) }}</span>
+            <span class="fw-bold" style="color: #0d6efd;">{{ selected_trainer.name }} - {{ selected_month }} 이번 달 매출</span>
+            <span class="fw-bold fs-6" style="color: #0d6efd;">₩{{ "{:,}".format(selected_trainer.sales) }}</span>
         </div>
         <div class="d-flex justify-content-end mt-2 gap-2">
             <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#dayoffModal">
@@ -471,7 +475,7 @@ function filterByBranch() {
                     <td class="{% if selected_trainer.incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.incentive) }}</td>
                 </tr>
                 <tr>
-                    <td class="bg-light fw-bold">수업당 인센</td>
+                    <td class="bg-light fw-bold">수업당 인센 <small class="text-muted">({{ selected_trainer.class_count }}회)</small></td>
                     <td class="{% if selected_trainer.class_incentive > 0 %}text-success fw-bold{% endif %}">₩{{ "{:,}".format(selected_trainer.class_incentive) }}</td>
                 </tr>
                 <tr>
@@ -525,7 +529,7 @@ function filterByBranch() {
                     <td class="bg-light">세금 (3.3%)</td>
                     <td class="text-danger" id="taxDisplay">-₩{{ "{:,}".format(tax) }}</td>
                 </tr>
-                <tr class="table-dark">
+                <tr class="table-dark text-white">
                     <th>최종 급여</th>
                     <th id="finalSalaryDisplay">₩{{ "{:,}".format(final_salary) }}</th>
                 </tr>

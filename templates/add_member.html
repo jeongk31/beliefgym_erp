@@ -9,6 +9,22 @@
             </div>
             <div class="card-body">
                 <form method="POST" id="memberForm">
+                    <!-- Registered Member Selection -->
+                    {% if registered_members %}
+                    <div class="mb-3">
+                        <label for="registered_member_id" class="form-label">등록 회원 선택</label>
+                        <select class="form-select" id="registered_member_id" name="registered_member_id" onchange="fillMemberInfo()">
+                            <option value="">-- 등록 회원에서 선택 --</option>
+                            {% for rm in registered_members %}
+                            <option value="{{ rm.id }}" data-name="{{ rm.name }}" data-phone="{{ rm.phone or '' }}">
+                                {{ rm.name }} ({{ rm.username }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">등록된 회원을 선택하면 이름과 전화번호가 자동 입력됩니다.</small>
+                    </div>
+                    {% endif %}
+
                     <!-- Member Type Selection -->
                     <div class="row mb-3">
                         <div class="col-md-6">
@@ -37,7 +53,8 @@
                         </div>
                         <div class="col-md-6">
                             <label for="phone" class="form-label">전화번호 *</label>
-                            <input type="tel" class="form-control" id="phone" name="phone" placeholder="010-0000-0000" required>
+                            <input type="tel" class="form-control" id="phone" name="phone" placeholder="010-0000-0000" required
+                                   oninput="var n=this.value.replace(/[^\d]/g,'');this.value=n.length<=3?n:n.length<=7?n.slice(0,3)+'-'+n.slice(3):n.slice(0,3)+'-'+n.slice(3,7)+'-'+n.slice(7,11);">
                         </div>
                     </div>
 
@@ -57,8 +74,10 @@
                             <input type="number" class="form-control" id="sessions" name="sessions" min="1" required>
                         </div>
                         <div class="col-md-4">
-                            <label for="unit_price" class="form-label">단가 (원) <span class="required-star">*</span></label>
-                            <input type="number" class="form-control" id="unit_price" name="unit_price" min="0" step="1000" required>
+                            <label for="unit_price_display" class="form-label">단가 (원) <span class="required-star">*</span></label>
+                            <input type="text" class="form-control" id="unit_price_display" placeholder="0" required
+                                   oninput="this.value=this.value.replace(/[^\d]/g,'').replace(/\B(?=(\d{3})+(?!\d))/g,',');document.getElementById('unit_price').value=this.value.replace(/,/g,'')||'0';">
+                            <input type="hidden" id="unit_price" name="unit_price">
                         </div>
                     </div>
 
@@ -127,6 +146,56 @@
 {% block scripts %}
 <script src="{{ url_for('static', filename='js/signature.js') }}"></script>
 <script>
+    // Fill member info when registered member selected
+    function fillMemberInfo() {
+        const select = document.getElementById('registered_member_id');
+        if (!select) return;
+        const selectedOption = select.options[select.selectedIndex];
+
+        if (selectedOption.value) {
+            document.getElementById('member_name').value = selectedOption.dataset.name || '';
+            const phone = selectedOption.dataset.phone || '';
+            document.getElementById('phone').value = formatPhoneNumber(phone);
+        }
+    }
+
+    // Format number with commas (단가)
+    function formatNumberWithCommas(value) {
+        const num = value.replace(/[^\d]/g, '');
+        if (!num) return '';
+        return num.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    }
+
+    // Format phone number (000-0000-0000)
+    function formatPhoneNumber(value) {
+        const num = value.replace(/[^\d]/g, '');
+        if (num.length <= 3) {
+            return num;
+        } else if (num.length <= 7) {
+            return num.slice(0, 3) + '-' + num.slice(3);
+        } else {
+            return num.slice(0, 3) + '-' + num.slice(3, 7) + '-' + num.slice(7, 11);
+        }
+    }
+
+    // Unit price formatting - add comma every 3 digits as you type
+    const unitPriceDisplay = document.getElementById('unit_price_display');
+    if (unitPriceDisplay) {
+        unitPriceDisplay.addEventListener('input', function(e) {
+            const formatted = formatNumberWithCommas(e.target.value);
+            e.target.value = formatted;
+            document.getElementById('unit_price').value = formatted.replace(/,/g, '') || '0';
+        });
+    }
+
+    // Phone number formatting - auto format as 000-0000-0000 as you type
+    const phoneInput = document.getElementById('phone');
+    if (phoneInput) {
+        phoneInput.addEventListener('input', function(e) {
+            e.target.value = formatPhoneNumber(e.target.value);
+        });
+    }
+
     // Show/hide OT notice, payment fields, and trainer based on member type
     document.getElementById('member_type').addEventListener('change', function() {
         const otNotice = document.getElementById('otNotice');
@@ -134,6 +203,7 @@
         const paymentMethod = document.getElementById('payment_method');
         const sessions = document.getElementById('sessions');
         const unitPrice = document.getElementById('unit_price');
+        const unitPriceDisplay = document.getElementById('unit_price_display');
         const trainerField = document.getElementById('trainerField');
         const trainerId = document.getElementById('trainer_id');
 
@@ -148,10 +218,11 @@
             // Remove required and set default values for OT
             paymentMethod.removeAttribute('required');
             sessions.removeAttribute('required');
-            unitPrice.removeAttribute('required');
+            unitPriceDisplay.removeAttribute('required');
             paymentMethod.value = '';
             sessions.value = '1';
             unitPrice.value = '0';
+            unitPriceDisplay.value = '0';
         } else {
             otNotice.style.display = 'none';
             paymentFields.style.display = 'flex';
@@ -163,7 +234,7 @@
             // Restore required for regular members
             paymentMethod.setAttribute('required', 'required');
             sessions.setAttribute('required', 'required');
-            unitPrice.setAttribute('required', 'required');
+            unitPriceDisplay.setAttribute('required', 'required');
         }
     });
 
