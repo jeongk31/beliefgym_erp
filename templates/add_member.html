@@ -105,6 +105,21 @@
                         <textarea class="form-control" id="special_notes" name="special_notes" rows="2" placeholder="선택사항"></textarea>
                     </div>
 
+                    {% if user.role == 'trainer' %}
+                    <div class="mb-3" id="teachingTrainerField">
+                        <label for="teaching_trainer_id" class="form-label">수업 담당 트레이너</label>
+                        <select class="form-select" id="teaching_trainer_id" name="teaching_trainer_id">
+                            <option value="">본인 (기본값)</option>
+                            {% for trainer in branch_trainers %}
+                            {% if trainer.id != user.id %}
+                            <option value="{{ trainer.id }}">{{ trainer.name }}</option>
+                            {% endif %}
+                            {% endfor %}
+                        </select>
+                        <small class="text-muted">다른 트레이너를 선택하면 매출이 50/50으로 분할됩니다. (등록자 50% + 수업 담당 50%)</small>
+                    </div>
+                    {% endif %}
+
                     {% if user.role in ['main_admin', 'branch_admin'] %}
                     <div class="mb-3" id="trainerField">
                         <label for="trainer_id" class="form-label">담당 트레이너 <span class="required-star">*</span></label>
@@ -206,6 +221,7 @@
         const unitPriceDisplay = document.getElementById('unit_price_display');
         const trainerField = document.getElementById('trainerField');
         const trainerId = document.getElementById('trainer_id');
+        const teachingTrainerField = document.getElementById('teachingTrainerField');
 
         if (this.value === 'OT회원') {
             otNotice.style.display = 'block';
@@ -214,6 +230,10 @@
             if (trainerField) {
                 trainerField.style.display = 'none';
                 if (trainerId) trainerId.removeAttribute('required');
+            }
+            // Hide teaching trainer field for OT
+            if (teachingTrainerField) {
+                teachingTrainerField.style.display = 'none';
             }
             // Remove required and set default values for OT
             paymentMethod.removeAttribute('required');
@@ -230,6 +250,10 @@
             if (trainerField) {
                 trainerField.style.display = 'block';
                 if (trainerId) trainerId.setAttribute('required', 'required');
+            }
+            // Show teaching trainer field for regular members
+            if (teachingTrainerField) {
+                teachingTrainerField.style.display = 'block';
             }
             // Restore required for regular members
             paymentMethod.setAttribute('required', 'required');

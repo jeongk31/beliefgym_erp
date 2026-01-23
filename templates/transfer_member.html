@@ -26,11 +26,34 @@
                         </tr>
                         <tr>
                             <td class="fw-bold">총 세션</td>
-                            <td>{{ member.sessions }}회</td>
+                            <td>{{ member.sessions }}회 (단가: {{ "{:,}".format(member.unit_price) }}원)</td>
                         </tr>
                         <tr>
-                            <td class="fw-bold">단가</td>
-                            <td>{{ "{:,}".format(member.unit_price) }}원</td>
+                            <td class="fw-bold">완료</td>
+                            <td>{{ completed_sessions }}회 ({{ "%.0f"|format(completion_rate) }}% 소진)</td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">잔여</td>
+                            <td>{{ remaining_sessions }}회</td>
+                        </tr>
+                    </table>
+                </div>
+
+                <!-- 매출 Preview -->
+                <div class="alert {% if completion_rate >= 50 %}alert-secondary{% else %}alert-success{% endif %} mb-3">
+                    <h6 class="mb-2"><i class="bi bi-calculator me-1"></i>인계 시 매출 예상</h6>
+                    <table class="table table-sm table-borderless mb-0">
+                        <tr>
+                            <td class="fw-bold">{{ member.trainer.name if member.trainer else '기존 트레이너' }}</td>
+                            <td>{{ completed_sessions }}회 × {{ "{:,}".format(member.unit_price) }}원 = <strong>{{ "{:,}".format(completed_sessions * member.unit_price) }}원</strong></td>
+                        </tr>
+                        <tr>
+                            <td class="fw-bold">새 트레이너</td>
+                            {% if completion_rate >= 50 %}
+                            <td class="text-muted">50% 이상 소진 → <strong>매출 0원</strong></td>
+                            {% else %}
+                            <td>{{ remaining_sessions }}회 × {{ "{:,}".format(member.unit_price) }}원 × 50% = <strong>{{ "{:,}".format((remaining_sessions * member.unit_price * 0.5)|int) }}원</strong></td>
+                            {% endif %}
                         </tr>
                     </table>
                 </div>
@@ -50,10 +73,15 @@
 
                     <div class="alert alert-warning">
                         <i class="bi bi-exclamation-triangle me-1"></i>
-                        <strong>인계 시 처리 내용:</strong>
+                        <strong>인계 시 매출 계산 규칙:</strong>
                         <ul class="mb-0 mt-2">
-                            <li>기존 트레이너: 완료된 수업만 매출에 반영됩니다.</li>
-                            <li>새 트레이너: 남은 세션이 새로 등록되어 매출에 반영됩니다.</li>
+                            <li><strong>기존 트레이너:</strong> 완료된 수업 수 × 단가 = 매출</li>
+                            <li><strong>새 트레이너:</strong>
+                                <ul>
+                                    <li>50% 이상 소진 시 → 매출 0원</li>
+                                    <li>50% 미만 소진 시 → 잔여 세션의 50% 매출</li>
+                                </ul>
+                            </li>
                             <li>회원 정보(이름, 연락처 등)가 새 트레이너에게 전달됩니다.</li>
                         </ul>
                     </div>

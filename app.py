@@ -81,6 +81,17 @@ def role_required(*roles):
     return decorator
 
 
+def block_team_leader(f):
+    """Decorator to block team_leader from accessing non-OT pages"""
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if 'user' in session and session['user']['role'] == 'team_leader':
+            flash('접근 권한이 없습니다.', 'error')
+            return redirect(url_for('ot_members'))
+        return f(*args, **kwargs)
+    return decorated_function
+
+
 def prevent_duplicate_submission(f):
     """Decorator to prevent duplicate form submissions within a time window."""
     @wraps(f)
@@ -268,9 +279,11 @@ def login():
                     'role': user['role'],
                     'branch_id': user.get('branch_id')
                 }
-                # Redirect members to member dashboard
+                # Redirect based on role
                 if user['role'] == 'member':
                     return redirect(url_for('member_dashboard'))
+                elif user['role'] == 'team_leader':
+                    return redirect(url_for('ot_members'))
                 return redirect(url_for('dashboard'))
 
         flash('아이디 또는 비밀번호가 올바르지 않습니다.', 'error')
@@ -286,12 +299,15 @@ def logout():
 
 @app.route('/dashboard')
 @login_required
+@block_team_leader
 def dashboard():
     user = session['user']
 
-    # Redirect members to their dashboard
+    # Redirect based on role
     if user['role'] == 'member':
         return redirect(url_for('member_dashboard'))
+    elif user['role'] == 'team_leader':
+        return redirect(url_for('ot_members'))
 
     today = datetime.now(KST).date()
 
@@ -332,8 +348,8 @@ def dashboard():
         # Trainer dashboard
         trainer_id = user['id']
 
-        # Total members
-        members_response = supabase.table('members').select('id, member_name, sessions, unit_price, channel, refund_status, created_at').eq('trainer_id', trainer_id).execute()
+        # Total members (where trainer is registering OR teaching trainer)
+        members_response = supabase.table('members').select('id, member_name, sessions, unit_price, channel, refund_status, created_at, registering_trainer_id, teaching_trainer_id').or_(f'registering_trainer_id.eq.{trainer_id},teaching_trainer_id.eq.{trainer_id}').execute()
         all_members = members_response.data or []
         dashboard_data['member_count'] = len(all_members)
 
@@ -345,17 +361,22 @@ def dashboard():
         new_last_month = [m for m in all_members if prev_month_start.isoformat() <= m['created_at'][:10] < month_start.isoformat()]
         dashboard_data['new_members_last_month'] = len(new_last_month)
 
-        # Sales this month (50% for WI, refunded members included with proportional amount)
-        dashboard_data['sales_this_month'] = sum(
-            m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-            for m in new_this_month
-        )
+        # Sales this month (50% for WI, 50% split for different trainers)
+        def calc_dashboard_sales(m):
+            amount = m['sessions'] * m['unit_price']
+            if m.get('channel') == 'WI':
+                amount = amount * 0.5
+            # Apply 50/50 split if registering and teaching trainers are different
+            registering = m.get('registering_trainer_id')
+            teaching = m.get('teaching_trainer_id')
+            if registering and teaching and registering != teaching:
+                amount = amount * 0.5
+            return amount
+
+        dashboard_data['sales_this_month'] = sum(calc_dashboard_sales(m) for m in new_this_month)
 
         # Sales last month
-        dashboard_data['sales_last_month'] = sum(
-            m['sessions'] * m['unit_price'] * (0.5 if m.get('channel') == 'WI' else 1)
-            for m in new_last_month
-        )
+        dashboard_data['sales_last_month'] = sum(calc_dashboard_sales(m) for m in new_last_month)
 
         # Today's schedules
         schedules_today = supabase.table('schedules').select(
@@ -766,6 +787,7 @@ def add_registered_member():
 
 @app.route('/members')
 @login_required
+@block_team_leader
 def members():
     user = session['user']
 
@@ -1046,10 +1068,12 @@ def members():
 
 @app.route('/members/add', methods=['GET', 'POST'])
 @login_required
+@block_team_leader
 @prevent_duplicate_submission
 def add_member():
     user = session['user']
     trainers = []
+    branch_trainers = []
     registered_members = []
 
     # Only admins can select trainer
@@ -1059,6 +1083,11 @@ def add_member():
         else:
             response = supabase.table('users').select('id, name').eq('role', 'trainer').eq('branch_id', user['branch_id']).execute()
         trainers = response.data if response.data else []
+
+    # For trainers, get all trainers from their branch (for teaching trainer selection)
+    if user['role'] == 'trainer':
+        bt_response = supabase.table('users').select('id, name').eq('role', 'trainer').eq('branch_id', user['branch_id']).execute()
+        branch_trainers = bt_response.data if bt_response.data else []
 
     # Get registered members (users with role='member')
     if user['role'] == 'main_admin':
@@ -1088,18 +1117,35 @@ def add_member():
         occupation = request.form.get('occupation')
         special_notes = request.form.get('special_notes')
 
-        # Determine trainer_id
+        # Determine trainer_id and teaching_trainer_id
+        registering_trainer_id = None
+        teaching_trainer_id = None
+
         if user['role'] == 'trainer':
-            trainer_id = user['id']
+            # Trainer is registering the member
+            registering_trainer_id = user['id']
+            # Check if they selected another trainer to teach
+            selected_teaching_trainer = request.form.get('teaching_trainer_id')
+            if selected_teaching_trainer:
+                teaching_trainer_id = selected_teaching_trainer
+            else:
+                # Default: trainer teaches their own member
+                teaching_trainer_id = user['id']
+            # For backward compatibility, trainer_id is the teaching trainer
+            trainer_id = teaching_trainer_id
         else:
+            # Admin is registering
             trainer_id = request.form.get('trainer_id')
+            # For admins, registering and teaching trainer are the same
+            registering_trainer_id = trainer_id
+            teaching_trainer_id = trainer_id
 
         # Validate required fields (payment fields optional for OT members)
         if member_type == 'OT회원':
             # OT members: only need basic info (no trainer required - goes to pool)
             if not all([member_name, phone, channel]):
                 flash('모든 필수 항목을 입력해주세요.', 'error')
-                return render_template('add_member.html', user=user, trainers=trainers, registered_members=registered_members)
+                return render_template('add_member.html', user=user, trainers=trainers, branch_trainers=branch_trainers, registered_members=registered_members)
             # OT members need 횟수 (sessions)
             sessions = sessions or '1'
             unit_price = '0'
@@ -1108,7 +1154,7 @@ def add_member():
             # Regular members: all payment fields required
             if not all([member_name, phone, payment_method, sessions, unit_price, channel, trainer_id]):
                 flash('모든 필수 항목을 입력해주세요.', 'error')
-                return render_template('add_member.html', user=user, trainers=trainers, registered_members=registered_members)
+                return render_template('add_member.html', user=user, trainers=trainers, branch_trainers=branch_trainers, registered_members=registered_members)
 
         # Insert member into database
         try:
@@ -1140,6 +1186,9 @@ def add_member():
                 # trainer_id stays NULL for OT members
             else:
                 member_data['trainer_id'] = trainer_id
+                # Add new split trainer tracking fields
+                member_data['registering_trainer_id'] = registering_trainer_id
+                member_data['teaching_trainer_id'] = teaching_trainer_id
 
             # Add optional fields if provided
             if age:
@@ -1175,11 +1224,12 @@ def add_member():
         except Exception as e:
             flash(f'수업 등록 중 오류가 발생했습니다: {str(e)}', 'error')
 
-    return render_template('add_member.html', user=user, trainers=trainers, registered_members=registered_members)
+    return render_template('add_member.html', user=user, trainers=trainers, branch_trainers=branch_trainers, registered_members=registered_members)
 
 
 @app.route('/members/<member_id>')
 @login_required
+@block_team_leader
 def view_member(member_id):
     user = session['user']
 
@@ -1354,6 +1404,7 @@ def api_delete_inbody_photo(member_id, photo_index):
 
 @app.route('/api/schedule/<schedule_id>/notes', methods=['POST'])
 @login_required
+@block_team_leader
 def api_update_session_notes(schedule_id):
     """Update session notes for a schedule entry."""
     user = session['user']
@@ -1707,6 +1758,61 @@ def add_branch_admin():
     return render_template('add_branch_admin.html', user=user, branches=branches)
 
 
+@app.route('/team-leaders/add', methods=['GET', 'POST'])
+@login_required
+@prevent_duplicate_submission
+def add_team_leader():
+    user = session['user']
+
+    # Only main_admin and branch_admin can add team leaders
+    if user['role'] not in ['main_admin', 'branch_admin']:
+        flash('접근 권한이 없습니다.', 'error')
+        return redirect(url_for('dashboard'))
+
+    branches = []
+    if user['role'] == 'main_admin':
+        branches_response = supabase.table('branches').select('*').execute()
+        branches = branches_response.data if branches_response.data else []
+
+    if request.method == 'POST':
+        username = request.form.get('username')
+        password = request.form.get('password')
+        name = request.form.get('name')
+
+        # Branch admin uses their own branch, main admin selects
+        if user['role'] == 'branch_admin':
+            branch_id = user['branch_id']
+        else:
+            branch_id = request.form.get('branch_id')
+
+        if not all([username, password, name, branch_id]):
+            flash('모든 필수 항목을 입력해주세요.', 'error')
+            return render_template('add_team_leader.html', user=user, branches=branches)
+
+        # Check if username already exists
+        existing = supabase.table('users').select('id').eq('username', username).execute()
+        if existing.data:
+            flash('이미 사용 중인 아이디입니다.', 'error')
+            return render_template('add_team_leader.html', user=user, branches=branches)
+
+        try:
+            team_leader_data = {
+                'username': username,
+                'password_hash': password,
+                'name': name,
+                'role': 'team_leader',
+                'branch_id': branch_id
+            }
+
+            supabase.table('users').insert(team_leader_data).execute()
+            flash('팀장이 성공적으로 등록되었습니다.', 'success')
+            return redirect(url_for('dashboard'))
+        except Exception as e:
+            flash(f'팀장 등록 중 오류가 발생했습니다: {str(e)}', 'error')
+
+    return render_template('add_team_leader.html', user=user, branches=branches)
+
+
 # Helper function to auto-cancel past uncompleted sessions
 def auto_cancel_past_sessions():
     """Mark past sessions as cancelled if they weren't completed"""
@@ -1723,6 +1829,7 @@ def auto_cancel_past_sessions():
 # Schedule routes
 @app.route('/schedule')
 @login_required
+@block_team_leader
 def schedule():
     user = session['user']
 
@@ -1943,6 +2050,7 @@ def schedule():
 
 @app.route('/schedule/add', methods=['GET', 'POST'])
 @login_required
+@block_team_leader
 def add_schedule():
     user = session['user']
 
@@ -2037,6 +2145,7 @@ def add_schedule():
 
 @app.route('/schedule/delete/<schedule_id>', methods=['POST'])
 @login_required
+@block_team_leader
 def delete_schedule(schedule_id):
     user = session['user']
 
@@ -2077,6 +2186,7 @@ def delete_schedule(schedule_id):
 
 @app.route('/schedule/complete/<schedule_id>', methods=['GET', 'POST'])
 @login_required
+@block_team_leader
 def complete_session(schedule_id):
     user = session['user']
 
@@ -2131,6 +2241,7 @@ def complete_session(schedule_id):
 
 @app.route('/schedule/cancel/<schedule_id>', methods=['POST'])
 @login_required
+@block_team_leader
 def cancel_session(schedule_id):
     user = session['user']
 
@@ -2210,6 +2321,7 @@ def cancel_session(schedule_id):
 
 @app.route('/schedule/complete-ajax', methods=['POST'])
 @login_required
+@block_team_leader
 def complete_session_ajax():
     """AJAX endpoint for trainer to confirm a session (member will sign separately)"""
     user = session['user']
@@ -2257,6 +2369,7 @@ def complete_session_ajax():
 
 @app.route('/schedule/cancel-ajax', methods=['POST'])
 @login_required
+@block_team_leader
 def cancel_session_ajax():
     """AJAX endpoint for cancelling a session from the popup modal"""
     user = session['user']
@@ -2452,6 +2565,7 @@ def edit_schedule_status():
 
 @app.route('/schedule/quick-add', methods=['POST'])
 @login_required
+@block_team_leader
 def quick_add_schedule():
     """AJAX endpoint for quickly adding schedules by clicking on time slots"""
     user = session['user']
@@ -2608,6 +2722,7 @@ def quick_add_schedule():
 
 @app.route('/schedule/quick-delete', methods=['POST'])
 @login_required
+@block_team_leader
 def quick_delete_schedule():
     """AJAX endpoint for quickly deleting schedules"""
     user = session['user']
@@ -2649,6 +2764,7 @@ def quick_delete_schedule():
 
 @app.route('/schedule/move', methods=['POST'])
 @login_required
+@block_team_leader
 def move_schedule():
     """AJAX endpoint for moving schedules via drag-and-drop"""
     user = session['user']
@@ -2842,16 +2958,16 @@ def calculate_lesson_fee_rate_other(sales_amount, settings=None):
     return calculate_lesson_fee_rate(sales_amount, settings)
 
 
-def calculate_class_incentive(class_count, sales_amount):
+def calculate_class_incentive(class_count, sales_excluding_wi):
     """Calculate 수업당 인센 based on class count
     - 30개 이상: 400,000원
     - 50개 이상: 600,000원
     - 70개 이상: 800,000원
     - 100개 이상: 1,000,000원
-    * 매출 300만원 이하 일시 수업 갯수 인센 적용 안됨
+    * 매출 300만원 이하 일시 수업 갯수 인센 적용 안됨 (WI 매출 제외하고 계산)
     """
-    # Must have sales > 3,000,000 to receive class incentive
-    if sales_amount <= 3000000:
+    # Must have sales > 3,000,000 (excluding WI) to receive class incentive
+    if sales_excluding_wi <= 3000000:
         return 0
 
     if class_count >= 100:
@@ -2971,6 +3087,7 @@ def calculate_refund_deduction(member_id):
 
 @app.route('/members/<member_id>/refund', methods=['POST'])
 @login_required
+@block_team_leader
 def refund_member(member_id):
     """Process a member refund with proportional calculation based on completed sessions"""
     user = session['user']
@@ -3072,6 +3189,7 @@ def refund_member(member_id):
 
 @app.route('/members/<member_id>/cancel-refund', methods=['POST'])
 @login_required
+@block_team_leader
 def cancel_refund(member_id):
     """Cancel a member refund - Super Admin only"""
     user = session['user']
@@ -3129,6 +3247,7 @@ def cancel_refund(member_id):
 
 @app.route('/members/<member_id>/transfer', methods=['GET', 'POST'])
 @login_required
+@block_team_leader
 def transfer_member(member_id):
     """Transfer a member to another trainer in the same branch (회원 인계)"""
     user = session['user']
@@ -3180,11 +3299,22 @@ def transfer_member(member_id):
     available_trainers = trainers_response.data if trainers_response.data else []
 
     if request.method == 'GET':
+        # Calculate completed sessions for display
+        completed_sessions_response = supabase.table('schedules').select('id').eq(
+            'member_id', member_id
+        ).eq('status', '수업 완료').execute()
+        completed_sessions = len(completed_sessions_response.data) if completed_sessions_response.data else 0
+        remaining_sessions = member['sessions'] - completed_sessions
+        completion_rate = (completed_sessions / member['sessions'] * 100) if member['sessions'] > 0 else 0
+
         # Show transfer form
         return render_template('transfer_member.html',
                                user=user,
                                member=member,
-                               trainers=available_trainers)
+                               trainers=available_trainers,
+                               completed_sessions=completed_sessions,
+                               remaining_sessions=remaining_sessions,
+                               completion_rate=completion_rate)
 
     # POST - Process the transfer
     new_trainer_id = request.form.get('new_trainer_id')
@@ -3213,14 +3343,27 @@ def transfer_member(member_id):
         flash('남은 세션이 없어 인계할 수 없습니다.', 'error')
         return redirect(url_for('view_member', member_id=member_id))
 
-    # Calculate amounts
-    completed_amount = completed_sessions * unit_price
-    remaining_amount = remaining_sessions * unit_price
+    # Calculate completion percentage for 매출 transfer logic
+    completion_percentage = (completed_sessions / original_sessions) * 100 if original_sessions > 0 else 0
+
+    # Determine new trainer's 매출 rate based on completion percentage
+    # If old trainer completed >= 50%: new trainer gets 0 매출
+    # If old trainer completed < 50%: new trainer gets 50% of remaining sessions' value
+    if completion_percentage >= 50:
+        new_trainer_unit_price = 0  # New trainer gets no 매출
+        new_trainer_sales_note = "50% 이상 소진으로 매출 0원"
+    else:
+        new_trainer_unit_price = int(unit_price * 0.5)  # 50% of unit price
+        new_trainer_sales_note = "50% 미만 소진으로 잔여 매출 50%"
+
+    # Calculate amounts for display
+    old_trainer_amount = completed_sessions * unit_price
+    new_trainer_amount = remaining_sessions * new_trainer_unit_price
 
     current_month = datetime.now(KST).date().replace(day=1)
 
     try:
-        # 1. Update original member record (similar to refund - proportional)
+        # 1. Update original member record - old trainer keeps 매출 for completed sessions
         original_update = {
             'transfer_status': 'transferred',
             'original_sessions': original_sessions,
@@ -3233,17 +3376,20 @@ def transfer_member(member_id):
         supabase.table('members').update(original_update).eq('id', member_id).execute()
 
         # 2. Create new member record for the new trainer with remaining sessions
+        # Unit price is adjusted based on transfer rules (0 or 50%)
         new_member_data = {
             'member_name': member['member_name'],
             'phone': member['phone'],
             'payment_method': member['payment_method'],
             'sessions': remaining_sessions,
-            'unit_price': unit_price,
+            'unit_price': new_trainer_unit_price,  # Adjusted for 매출 calculation
+            'original_unit_price': unit_price,  # Store original for reference
             'channel': member['channel'],
             'trainer_id': new_trainer_id,
             'transfer_status': 'received',
             'transferred_from': member_id,
             'transferred_from_trainer': member['trainer_id'],
+            'transfer_completion_rate': completion_percentage,  # Store for reference
             'signature': member.get('signature')
         }
         new_member_response = supabase.table('members').insert(new_member_data).execute()
@@ -3256,9 +3402,11 @@ def transfer_member(member_id):
         ).eq('status', '계획').gte('date', today).execute()
         deleted_count = len(deleted_schedules.data) if deleted_schedules.data else 0
 
-        transfer_msg = f'회원 인계가 완료되었습니다. ({from_trainer["name"]} → {new_trainer["name"]}, 완료: {completed_sessions}회, 인계: {remaining_sessions}회)'
+        transfer_msg = f'회원 인계가 완료되었습니다. ({from_trainer["name"]} → {new_trainer["name"]})'
+        transfer_msg += f'\n- {from_trainer["name"]}: {completed_sessions}회 완료, 매출 {old_trainer_amount:,}원'
+        transfer_msg += f'\n- {new_trainer["name"]}: {remaining_sessions}회 인계, 매출 {new_trainer_amount:,}원 ({new_trainer_sales_note})'
         if deleted_count > 0:
-            transfer_msg += f' 예정된 수업 {deleted_count}개가 삭제되었습니다.'
+            transfer_msg += f'\n- 예정된 수업 {deleted_count}개가 삭제되었습니다.'
         flash(transfer_msg, 'success')
 
         if new_member_id:
@@ -3268,6 +3416,154 @@ def transfer_member(member_id):
     except Exception as e:
         flash(f'회원 인계 중 오류가 발생했습니다: {str(e)}', 'error')
         return redirect(url_for('view_member', member_id=member_id))
+
+
+@app.route('/transfer-history')
+@role_required('main_admin')
+def transfer_history():
+    """View all member transfer history (main_admin only)"""
+    user = session['user']
+
+    # Get filter parameters
+    filter_branch_id = request.args.get('branch_id', '')
+    month_str = request.args.get('month')
+
+    if month_str:
+        try:
+            selected_date = datetime.strptime(month_str, '%Y-%m').date()
+        except:
+            selected_date = datetime.now(KST).date()
+    else:
+        selected_date = datetime.now(KST).date()
+
+    month_start = selected_date.replace(day=1)
+    if month_start.month == 12:
+        next_month = month_start.replace(year=month_start.year + 1, month=1)
+    else:
+        next_month = month_start.replace(month=month_start.month + 1)
+
+    # Get branches for filter
+    branches_response = supabase.table('branches').select('id, name').execute()
+    branches = branches_response.data if branches_response.data else []
+
+    # Get transferred members (original records with transfer_status='transferred')
+    query = supabase.table('members').select(
+        '*, trainer:users!members_trainer_id_fkey(id, name, branch_id)'
+    ).eq('transfer_status', 'transferred').gte(
+        'transferred_at', month_start.isoformat()
+    ).lt('transferred_at', next_month.isoformat()).order('transferred_at', desc=True)
+
+    transferred_members = query.execute().data or []
+
+    # Filter by branch if specified
+    if filter_branch_id:
+        transferred_members = [
+            m for m in transferred_members
+            if m.get('trainer') and m['trainer'].get('branch_id') == filter_branch_id
+        ]
+
+    # Build transfer data with new member info
+    transfers = []
+    for orig in transferred_members:
+        # Get the new member record (received)
+        new_member_response = supabase.table('members').select(
+            '*, trainer:users!members_trainer_id_fkey(id, name)'
+        ).eq('transferred_from', orig['id']).execute()
+
+        new_member = new_member_response.data[0] if new_member_response.data else None
+
+        if new_member:
+            # Calculate values
+            original_sessions = orig.get('original_sessions', orig['sessions'])
+            completed_sessions = orig['sessions']
+            remaining_sessions = new_member['sessions']
+            original_unit_price = new_member.get('original_unit_price', orig['unit_price'])
+            new_unit_price = new_member['unit_price']
+
+            completion_rate = (completed_sessions / original_sessions * 100) if original_sessions > 0 else 0
+            old_trainer_sales = completed_sessions * orig['unit_price']
+            new_trainer_sales = remaining_sessions * new_unit_price
+
+            transfers.append({
+                'original_member_id': orig['id'],
+                'new_member_id': new_member['id'],
+                'member_name': orig['member_name'],
+                'from_trainer_name': orig['trainer']['name'] if orig.get('trainer') else '-',
+                'to_trainer_name': new_member['trainer']['name'] if new_member.get('trainer') else '-',
+                'transferred_at': orig.get('transferred_at'),
+                'original_sessions': original_sessions,
+                'completed_sessions': completed_sessions,
+                'remaining_sessions': remaining_sessions,
+                'original_unit_price': original_unit_price,
+                'new_unit_price': new_unit_price,
+                'completion_rate': completion_rate,
+                'old_trainer_sales': old_trainer_sales,
+                'new_trainer_sales': new_trainer_sales,
+                'sales_override': new_member.get('sales_override', False)
+            })
+
+    return render_template('transfer_history.html',
+                           user=user,
+                           branches=branches,
+                           filter_branch_id=filter_branch_id,
+                           selected_month=month_start.strftime('%Y-%m'),
+                           transfers=transfers)
+
+
+@app.route('/transfer-history/update-sales', methods=['POST'])
+@role_required('main_admin')
+def update_transfer_sales():
+    """Update the sales calculation for a transferred member"""
+    data = request.get_json()
+    member_id = data.get('member_id')
+    sales_option = data.get('sales_option')  # 'zero' or 'half'
+
+    if not member_id or not sales_option:
+        return jsonify({'success': False, 'error': '필수 정보가 누락되었습니다.'})
+
+    try:
+        # Get the member record
+        member_response = supabase.table('members').select('*').eq('id', member_id).execute()
+        if not member_response.data:
+            return jsonify({'success': False, 'error': '회원을 찾을 수 없습니다.'})
+
+        member = member_response.data[0]
+
+        # Only allow changes for received transfers
+        if member.get('transfer_status') != 'received':
+            return jsonify({'success': False, 'error': '인계받은 회원만 변경할 수 있습니다.'})
+
+        # Get original unit price
+        original_unit_price = member.get('original_unit_price', member['unit_price'])
+
+        # Calculate new unit price based on option
+        if sales_option == 'zero':
+            new_unit_price = 0
+        else:  # 'half'
+            new_unit_price = int(original_unit_price * 0.5)
+
+        # Update member record
+        update_data = {
+            'unit_price': new_unit_price,
+            'sales_override': True,
+            'sales_override_by': session['user']['id'],
+            'sales_override_at': datetime.now(KST).isoformat()
+        }
+
+        # Make sure original_unit_price is preserved
+        if not member.get('original_unit_price'):
+            update_data['original_unit_price'] = original_unit_price
+
+        supabase.table('members').update(update_data).eq('id', member_id).execute()
+
+        return jsonify({
+            'success': True,
+            'new_unit_price': new_unit_price,
+            'message': '매출 옵션이 변경되었습니다.'
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 
 def get_trainer_dayoffs(trainer_ids, month_str):
@@ -3290,6 +3586,7 @@ def calculate_dayoff_deduction(days):
 
 @app.route('/salary')
 @login_required
+@block_team_leader
 def salary():
     user = session['user']
 
@@ -3333,16 +3630,22 @@ def salary():
 
     if user['role'] == 'trainer':
         # Trainer sees only their own data - current month
-        members_response = supabase.table('members').select('id, sessions, unit_price, channel, payment_method, refund_status, created_at').eq('trainer_id', user['id']).gte('created_at', month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
+        # Get members where trainer is registering OR teaching trainer
+        members_response = supabase.table('members').select('id, sessions, unit_price, channel, payment_method, refund_status, created_at, registering_trainer_id, teaching_trainer_id').or_(f'registering_trainer_id.eq.{user["id"]},teaching_trainer_id.eq.{user["id"]}').gte('created_at', month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
         members_list = members_response.data if members_response.data else []
 
         # Get 6-month data for master trainer bonus
-        six_month_response = supabase.table('members').select('sessions, unit_price, channel, payment_method, refund_status').eq('trainer_id', user['id']).gte('created_at', six_month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
+        six_month_response = supabase.table('members').select('sessions, unit_price, channel, payment_method, refund_status, registering_trainer_id, teaching_trainer_id').or_(f'registering_trainer_id.eq.{user["id"]},teaching_trainer_id.eq.{user["id"]}').gte('created_at', six_month_start.isoformat()).lt('created_at', next_month.isoformat()).execute()
         six_month_members = six_month_response.data if six_month_response.data else []
 
         # Get all members for this trainer (for lesson fee calculation)
-        all_members_response = supabase.table('members').select('id, unit_price, payment_method').eq('trainer_id', user['id']).execute()
-        all_members = {m['id']: {'unit_price': m['unit_price'], 'payment_method': m.get('payment_method')} for m in (all_members_response.data or [])}
+        all_members_response = supabase.table('members').select('id, unit_price, payment_method, registering_trainer_id, teaching_trainer_id').or_(f'registering_trainer_id.eq.{user["id"]},teaching_trainer_id.eq.{user["id"]}').execute()
+        all_members = {m['id']: {
+            'unit_price': m['unit_price'],
+            'payment_method': m.get('payment_method'),
+            'registering_trainer_id': m.get('registering_trainer_id'),
+            'teaching_trainer_id': m.get('teaching_trainer_id')
+        } for m in (all_members_response.data or [])}
 
         # Get completed schedules for this month
         schedules_response = supabase.table('schedules').select('member_id, work_type, status').eq('trainer_id', user['id']).eq('status', '수업 완료').gte('schedule_date', month_start.isoformat()).lt('schedule_date', next_month.isoformat()).execute()
@@ -3352,29 +3655,49 @@ def salary():
         refund_response = supabase.table('members').select('refund_amount').eq('trainer_id', user['id']).eq('refund_status', 'refunded').eq('refund_applied_month', month_start.isoformat()).execute()
         refund_deductions = sum(m.get('refund_amount', 0) or 0 for m in (refund_response.data or []))
 
-        # Calculate sales with 50% for WI channel, 10% deduction for 카드/계좌이체
-        def calc_member_sales(m):
+        # Calculate sales with 50% for WI channel, 10% deduction for 카드/계좌이체, and 50% split for different trainers
+        def calc_member_sales(m, trainer_id, exclude_wi=False):
+            # Skip WI members when calculating for class incentive eligibility
+            if exclude_wi and m.get('channel') == 'WI':
+                return 0
+
             amount = m['sessions'] * m['unit_price']
             if m.get('payment_method') in ['카드', '계좌이체']:
                 amount = amount * 0.9
             if m.get('channel') == 'WI':
                 amount = amount * 0.5
+
+            # Apply 50/50 split if registering and teaching trainers are different
+            registering = m.get('registering_trainer_id')
+            teaching = m.get('teaching_trainer_id')
+            if registering and teaching and registering != teaching:
+                # Split sale 50/50
+                amount = amount * 0.5
+
             return amount
 
-        sales = sum(calc_member_sales(m) for m in members_list)
-        six_month_sales = sum(calc_member_sales(m) for m in six_month_members)
+        sales = sum(calc_member_sales(m, user['id']) for m in members_list)
+        sales_excluding_wi = sum(calc_member_sales(m, user['id'], exclude_wi=True) for m in members_list)
+        six_month_sales = sum(calc_member_sales(m, user['id']) for m in six_month_members)
         incentive = calculate_incentive(sales, salary_settings)
         master_bonus = calculate_master_trainer_bonus(six_month_sales, salary_settings)
 
-        # Calculate lesson fees (10% deduction for 카드/계좌이체)
+        # Calculate lesson fees (10% deduction for 카드/계좌이체, 50% split for different trainers)
         lesson_fee_base_main = 0
         lesson_fee_base_other = 0
         for schedule in schedules_list:
-            member_data = all_members.get(schedule['member_id'], {'unit_price': 0, 'payment_method': None})
+            member_data = all_members.get(schedule['member_id'], {'unit_price': 0, 'payment_method': None, 'registering_trainer_id': None, 'teaching_trainer_id': None})
             member_unit_price = member_data['unit_price']
             # Apply 10% deduction for 카드/계좌이체
             if member_data.get('payment_method') in ['카드', '계좌이체']:
                 member_unit_price = member_unit_price * 0.9
+
+            # Apply 50% split if registering and teaching trainers are different
+            registering = member_data.get('registering_trainer_id')
+            teaching = member_data.get('teaching_trainer_id')
+            if registering and teaching and registering != teaching:
+                member_unit_price = member_unit_price * 0.5
+
             if schedule['work_type'] == '근무내':
                 lesson_fee_base_main += member_unit_price
             else:
@@ -3390,9 +3713,9 @@ def salary():
         dayoff_days = trainer_dayoffs.get(user['id'], 0)
         dayoff_deduction = calculate_dayoff_deduction(dayoff_days)
 
-        # Calculate class count and class incentive (수업당 인센)
+        # Calculate class count and class incentive (수업당 인센) - must have >3M excluding WI
         class_count = len(schedules_list)
-        class_incentive = calculate_class_incentive(class_count, sales)
+        class_incentive = calculate_class_incentive(class_count, sales_excluding_wi)
 
         # Calculate OT incentive
         ot_session_count, ot_incentive = calculate_ot_incentive(user['id'], month_start, next_month)
@@ -3409,6 +3732,7 @@ def salary():
             'name': user['name'],
             'branch': '-',
             'sales': sales,
+            'sales_excluding_wi': sales_excluding_wi,
             'six_month_sales': six_month_sales,
             'incentive': incentive,
             'class_count': class_count,
@@ -3493,12 +3817,18 @@ def salary():
 
         # Calculate sales (매출) per trainer - current month (50% for WI, 10% deduction for 카드/계좌이체)
         trainer_sales = {}
+        trainer_sales_excluding_wi = {}  # For class incentive eligibility check
         for member in members_list:
             tid = member['trainer_id']
             contract_amount = member['sessions'] * member['unit_price']
             # Apply 10% deduction for 카드/계좌이체
             if member.get('payment_method') in ['카드', '계좌이체']:
                 contract_amount = contract_amount * 0.9
+
+            # For sales excluding WI (used for class incentive check)
+            if member.get('channel') != 'WI':
+                trainer_sales_excluding_wi[tid] = trainer_sales_excluding_wi.get(tid, 0) + contract_amount
+
             # Apply 50% if channel is WI
             if member.get('channel') == 'WI':
                 contract_amount = contract_amount * 0.5
@@ -3577,9 +3907,10 @@ def salary():
             dayoff_days = all_dayoffs.get(trainer['id'], 0)
             dayoff_deduction = calculate_dayoff_deduction(dayoff_days)
 
-            # Calculate class count and class incentive (수업당 인센)
+            # Calculate class count and class incentive (수업당 인센) - must have >3M excluding WI
             class_count = trainer_class_counts.get(trainer['id'], 0)
-            class_incentive = calculate_class_incentive(class_count, sales)
+            sales_excl_wi = trainer_sales_excluding_wi.get(trainer['id'], 0)
+            class_incentive = calculate_class_incentive(class_count, sales_excl_wi)
 
             # Calculate OT incentive
             ot_session_count, ot_incentive = calculate_ot_incentive(trainer['id'], month_start, next_month)
@@ -3597,6 +3928,7 @@ def salary():
                 'name': trainer['name'],
                 'branch': trainer['branch']['name'] if trainer.get('branch') else '-',
                 'sales': sales,
+                'sales_excluding_wi': sales_excl_wi,
                 'six_month_sales': six_month_sales,
                 'incentive': incentive,
                 'class_count': class_count,
@@ -3645,6 +3977,7 @@ def salary():
 
 @app.route('/salary/dayoff/update', methods=['POST'])
 @login_required
+@block_team_leader
 def update_trainer_dayoff():
     """API endpoint to update trainer's 휴무일 count - Admin/Manager only"""
     user = session['user']
@@ -4053,7 +4386,7 @@ def get_ot_session_number(member_id):
 
 # OT Members Management Page (Branch Admin)
 @app.route('/ot-members')
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def ot_members():
     user = session['user']
 
@@ -4066,6 +4399,7 @@ def ot_members():
         branches_response = supabase.table('branches').select('id, name').execute()
         branches = branches_response.data if branches_response.data else []
     else:
+        # branch_admin and team_leader see only their branch trainers
         trainers_response = supabase.table('users').select('id, name').eq('role', 'trainer').eq('branch_id', user['branch_id']).execute()
         branches = []
 
@@ -4088,8 +4422,8 @@ def ot_members():
 
     ot_members_data = query.order('created_at', desc=True).execute().data or []
 
-    # Filter by branch for branch_admin
-    if user['role'] == 'branch_admin':
+    # Filter by branch for branch_admin and team_leader
+    if user['role'] in ['branch_admin', 'team_leader']:
         ot_members_data = [m for m in ot_members_data if m.get('branch_id') == user['branch_id']]
     elif filter_branch_id:
         ot_members_data = [m for m in ot_members_data if m.get('branch_id') == filter_branch_id]
@@ -4183,7 +4517,7 @@ def ot_members():
 
 # Assign OT Member to Trainer
 @app.route('/ot-members/<member_id>/assign', methods=['POST'])
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def assign_ot_member(member_id):
     user = session['user']
     trainer_id = request.form.get('trainer_id')
@@ -4273,7 +4607,7 @@ def assign_ot_member(member_id):
 
 # Extend OT Deadline
 @app.route('/ot-members/<member_id>/extend', methods=['POST'])
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def extend_ot_deadline(member_id):
     user = session['user']
 
@@ -4324,7 +4658,7 @@ def extend_ot_deadline(member_id):
 
 # Manually Reclaim OT Member
 @app.route('/ot-members/<member_id>/reclaim', methods=['POST'])
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def reclaim_ot_member(member_id):
     user = session['user']
 
@@ -4438,7 +4772,7 @@ def extend_ot_assignment(assignment_id):
 
 # OT History Data (AJAX)
 @app.route('/ot-history')
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def ot_history():
     """Get OT member history (completed and returned)"""
     user = session['user']
@@ -4463,7 +4797,7 @@ def ot_history():
 
 # Increase OT Sessions
 @app.route('/ot-members/<member_id>/increase-sessions', methods=['POST'])
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def increase_ot_sessions(member_id):
     """Increase the number of OT sessions for a member"""
     user = session['user']
@@ -4524,7 +4858,7 @@ def increase_ot_sessions(member_id):
 
 # Decrease OT Sessions
 @app.route('/ot-members/<member_id>/decrease-sessions', methods=['POST'])
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def decrease_ot_sessions(member_id):
     """Decrease the number of OT sessions for a member"""
     user = session['user']
@@ -4601,7 +4935,7 @@ def decrease_ot_sessions(member_id):
 
 # Reclaim Single OT Assignment
 @app.route('/ot-assignments/<assignment_id>/reclaim', methods=['POST'])
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def reclaim_ot_assignment(assignment_id):
     """Reclaim a single OT assignment back to the pool"""
     user = session['user']
@@ -4673,7 +5007,7 @@ def reclaim_ot_assignment(assignment_id):
 
 # Get OT Member Detail with History (AJAX)
 @app.route('/ot-members/<member_id>/detail')
-@role_required('main_admin', 'branch_admin')
+@role_required('main_admin', 'branch_admin', 'team_leader')
 def get_ot_member_detail(member_id):
     """Get detailed info about an OT member including assignment history"""
     try:
@@ -4752,5 +5086,5 @@ def get_ot_member_detail(member_id):
 
 if __name__ == '__main__':
     import os
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5001))
     app.run(host='0.0.0.0', port=port, debug=False)

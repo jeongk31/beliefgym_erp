@@ -1,0 +1,201 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4>회원 인계 내역</h4>
+</div>
+
+<!-- Filter -->
+<div class="card mb-3">
+    <div class="card-body py-2">
+        <form method="GET" class="row align-items-center g-2">
+            <div class="col-auto">
+                <label class="col-form-label">지점:</label>
+            </div>
+            <div class="col-auto">
+                <select name="branch_id" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="">전체 지점</option>
+                    {% for branch in branches %}
+                    <option value="{{ branch.id }}" {% if filter_branch_id == branch.id %}selected{% endif %}>
+                        {{ branch.name }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-auto">
+                <label class="col-form-label ms-3">월:</label>
+            </div>
+            <div class="col-auto">
+                <input type="month" name="month" class="form-control form-control-sm"
+                       value="{{ selected_month }}" onchange="this.form.submit()">
+            </div>
+        </form>
+    </div>
+</div>
+
+{% if transfers %}
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>인계일</th>
+                        <th>회원명</th>
+                        <th>기존 트레이너</th>
+                        <th>새 트레이너</th>
+                        <th>진행률</th>
+                        <th>기존 매출</th>
+                        <th>새 매출</th>
+                        <th>매출 옵션</th>
+                        <th>관리</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for transfer in transfers %}
+                    <tr>
+                        <td>{{ transfer.transferred_at[:10] if transfer.transferred_at else '-' }}</td>
+                        <td>{{ transfer.member_name }}</td>
+                        <td>{{ transfer.from_trainer_name or '-' }}</td>
+                        <td>{{ transfer.to_trainer_name or '-' }}</td>
+                        <td>
+                            <span class="badge {% if transfer.completion_rate >= 50 %}bg-secondary{% else %}bg-success{% endif %}">
+                                {{ "%.0f"|format(transfer.completion_rate) }}% 소진
+                            </span>
+                        </td>
+                        <td>{{ "{:,}".format(transfer.old_trainer_sales) }}원</td>
+                        <td>
+                            <strong>{{ "{:,}".format(transfer.new_trainer_sales) }}원</strong>
+                            {% if transfer.sales_override %}
+                            <span class="badge bg-warning text-dark ms-1">수정됨</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if transfer.new_trainer_sales == 0 %}
+                            <span class="text-muted">매출 0원</span>
+                            {% else %}
+                            <span class="text-success">잔여 50%</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <button type="button" class="btn btn-sm btn-outline-primary"
+                                    onclick="openSalesModal('{{ transfer.new_member_id }}', '{{ transfer.member_name }}', {{ transfer.remaining_sessions }}, {{ transfer.original_unit_price }}, {{ transfer.new_trainer_sales }}, {{ transfer.completion_rate }})">
+                                <i class="bi bi-pencil"></i> 변경
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-info-circle me-1"></i>
+    인계 내역이 없습니다.
+</div>
+{% endif %}
+
+<!-- Sales Change Modal -->
+<div class="modal fade" id="salesModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">매출 옵션 변경</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="mb-3">
+                    <strong id="modalMemberName"></strong> - 새 트레이너 매출 변경
+                </p>
+
+                <div class="alert alert-info py-2 mb-3">
+                    <small>
+                        잔여 세션: <strong id="modalRemainingSessions"></strong>회<br>
+                        단가: <strong id="modalUnitPrice"></strong>원<br>
+                        소진율: <strong id="modalCompletionRate"></strong>%
+                    </small>
+                </div>
+
+                <form id="salesChangeForm">
+                    <input type="hidden" id="modalMemberId" name="member_id">
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">매출 옵션 선택</label>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input" type="radio" name="sales_option" id="option1" value="zero">
+                            <label class="form-check-label" for="option1">
+                                <strong>매출 0원</strong> (50% 이상 소진 규칙 적용)
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="sales_option" id="option2" value="half">
+                            <label class="form-check-label" for="option2">
+                                <strong>잔여 세션 50% 매출</strong> (50% 미만 소진 규칙 적용)
+                                <br><small class="text-muted" id="modalHalfAmount"></small>
+                            </label>
+                        </div>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">취소</button>
+                <button type="button" class="btn btn-primary" onclick="saveSalesChange()">
+                    <i class="bi bi-save"></i> 저장
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function openSalesModal(memberId, memberName, remainingSessions, unitPrice, currentSales, completionRate) {
+    document.getElementById('modalMemberId').value = memberId;
+    document.getElementById('modalMemberName').textContent = memberName;
+    document.getElementById('modalRemainingSessions').textContent = remainingSessions;
+    document.getElementById('modalUnitPrice').textContent = unitPrice.toLocaleString();
+    document.getElementById('modalCompletionRate').textContent = completionRate.toFixed(0);
+
+    const halfAmount = Math.floor(remainingSessions * unitPrice * 0.5);
+    document.getElementById('modalHalfAmount').textContent = `= ${halfAmount.toLocaleString()}원`;
+
+    // Select current option
+    if (currentSales === 0) {
+        document.getElementById('option1').checked = true;
+    } else {
+        document.getElementById('option2').checked = true;
+    }
+
+    new bootstrap.Modal(document.getElementById('salesModal')).show();
+}
+
+function saveSalesChange() {
+    const memberId = document.getElementById('modalMemberId').value;
+    const salesOption = document.querySelector('input[name="sales_option"]:checked').value;
+
+    fetch('/transfer-history/update-sales', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            member_id: memberId,
+            sales_option: salesOption
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('오류: ' + data.error);
+        }
+    })
+    .catch(error => {
+        alert('저장 중 오류가 발생했습니다.');
+        console.error(error);
+    });
+}
+</script>
+{% endblock %}

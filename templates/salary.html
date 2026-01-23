@@ -109,12 +109,15 @@ function filterByBranch() {
 
 {% if user.role == 'trainer' %}
     {% set my_sales = trainers[0].sales if trainers else 0 %}
+    {% set my_sales_excluding_wi = trainers[0].sales_excluding_wi if trainers else 0 %}
     {% set my_six_month = trainers[0].six_month_sales if trainers else 0 %}
 {% elif selected_trainer %}
     {% set my_sales = selected_trainer.sales %}
+    {% set my_sales_excluding_wi = selected_trainer.sales_excluding_wi %}
     {% set my_six_month = selected_trainer.six_month_sales %}
 {% else %}
     {% set my_sales = none %}
+    {% set my_sales_excluding_wi = none %}
     {% set my_six_month = none %}
 {% endif %}
 
@@ -142,8 +145,8 @@ function filterByBranch() {
                         <tbody>
                             <tr>
                                 <td class="table-secondary fw-bold">인센</td>
-                                {% if my_sales is not none and my_class_count is not none %}
-                                    {% set class_incentive_eligible = my_sales > 3000000 %}
+                                {% if my_sales_excluding_wi is not none and my_class_count is not none %}
+                                    {% set class_incentive_eligible = my_sales_excluding_wi > 3000000 %}
                                     <td class="{% if class_incentive_eligible and my_class_count >= 30 and my_class_count < 50 %}table-success fw-bold{% endif %}">₩400,000</td>
                                     <td class="{% if class_incentive_eligible and my_class_count >= 50 and my_class_count < 70 %}table-success fw-bold{% endif %}">₩600,000</td>
                                     <td class="{% if class_incentive_eligible and my_class_count >= 70 and my_class_count < 100 %}table-success fw-bold{% endif %}">₩800,000</td>
@@ -158,7 +161,7 @@ function filterByBranch() {
                         </tbody>
                     </table>
                 </div>
-                <small class="text-muted mt-2 d-block">* 매출 300만원 이하 일시 수업 갯수 인센 적용 안됨</small>
+                <small class="text-muted mt-2 d-block">* 매출 300만원 이하 일시 수업 갯수 인센 적용 안됨 (WI 매출 제외)</small>
             </div>
         </div>
     </div>

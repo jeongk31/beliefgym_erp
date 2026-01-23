@@ -12,7 +12,7 @@
     {% if session.user %}
     <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
         <div class="container">
-            <a class="navbar-brand" href="{{ url_for('dashboard') }}">빌리프짐</a>
+            <a class="navbar-brand" href="{% if session.user.role == 'team_leader' %}{{ url_for('ot_members') }}{% elif session.user.role == 'member' %}{{ url_for('member_dashboard') }}{% else %}{{ url_for('dashboard') }}{% endif %}">빌리프짐</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
@@ -22,6 +22,11 @@
                     <!-- Member Navigation -->
                     <li class="nav-item">
                         <a class="nav-link" href="{{ url_for('member_dashboard') }}">내 수업</a>
+                    </li>
+                    {% elif session.user.role == 'team_leader' %}
+                    <!-- Team Leader Navigation (OT only) -->
+                    <li class="nav-item">
+                        <a class="nav-link" href="{{ url_for('ot_members') }}">OT 관리</a>
                     </li>
                     {% elif session.user.role == 'trainer' %}
                     <!-- Trainer Navigation (simple list) -->
@@ -55,6 +60,10 @@
                             <li><a class="dropdown-item" href="{{ url_for('members') }}">수업</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('schedule') }}">스케줄</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('ot_members') }}">OT</a></li>
+                            {% if session.user.role == 'main_admin' %}
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('transfer_history') }}">인계 내역</a></li>
+                            {% endif %}
                         </ul>
                     </li>
                     <!-- 등록 Dropdown -->
@@ -64,6 +73,7 @@
                         </a>
                         <ul class="dropdown-menu">
                             <li><a class="dropdown-item" href="{{ url_for('trainers') }}">트레이너</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('add_team_leader') }}">팀장</a></li>
                             {% if session.user.role == 'main_admin' %}
                             <li><a class="dropdown-item" href="{{ url_for('branch_admins') }}">지점장</a></li>
                             <li><a class="dropdown-item" href="{{ url_for('branches') }}">지점</a></li>
@@ -80,7 +90,7 @@
                     <li class="nav-item dropdown">
                         <a class="nav-link dropdown-toggle" href="#" id="userDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
                             {{ session.user.name }}
-                            ({% if session.user.role == 'main_admin' %}총관리자{% elif session.user.role == 'branch_admin' %}지점장{% elif session.user.role == 'member' %}회원{% else %}트레이너{% endif %})
+                            ({% if session.user.role == 'main_admin' %}총관리자{% elif session.user.role == 'branch_admin' %}지점장{% elif session.user.role == 'team_leader' %}팀장{% elif session.user.role == 'member' %}회원{% else %}트레이너{% endif %})
                         </a>
                         <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="userDropdown">
                             <li><a class="dropdown-item" href="{{ url_for('change_password') }}"><i class="bi bi-key me-2"></i>비밀번호 변경</a></li>
